@@ -1192,21 +1192,24 @@ Las decisiones sobre seguridad, formulación final y comercialización deben ser
 
 # 28. Documentación
 
-| Documento                     | Contenido                               |
-| ----------------------------- | --------------------------------------- |
-| `docs/PRD.md`                 | Product Requirement Document            |
-| `docs/TRD.md`                 | Technical Requirement Document          |
-| `docs/ARCHITECTURE.md`        | Arquitectura del sistema                |
-| `docs/APP_FLOW.md`            | Flujo de los tres módulos               |
-| `docs/UI_UX_DESIGN_BRIEF.md`  | Diseño de interfaz                      |
-| `docs/BACKEND_SCHEMA.md`      | Esquema PostgreSQL                      |
-| `docs/SIMULATION_MODEL.md`    | Modelo matemático                       |
-| `docs/ML_MODEL.md`            | Dataset, features, modelos y validación |
-| `docs/SCIENTIFIC_EVIDENCE.md` | Fuentes y trazabilidad                  |
-| `docs/AI_PIPELINE.md`         | Pipeline de IA/RAG                      |
-| `docs/REPORT_SCHEMA.md`       | Estructura de reportes                  |
-| `docs/REGULATORY_RULES.md`    | Reglas y fuentes regulatorias           |
-| `docs/IMPLEMENTATION_PLAN.md` | Plan de implementación                  |
+| Documento                     | Contenido                               | Estado |
+| ----------------------------- | --------------------------------------- | --- |
+| `docs/PRD.md`                 | Product Requirement Document            | ✅ |
+| `docs/TRD.md`                 | Technical Requirement Document          | ✅ |
+| `docs/ARCHITECTURE.md`        | Arquitectura del sistema                | ✅ |
+| `docs/API_CONTRACT.md`        | **Contrato frontend ↔ backend Python**, para trabajar en paralelo | ✅ |
+| `docs/APP_FLOW.md`            | Flujo de los tres módulos               | ✅ |
+| `docs/UI_UX_DESIGN_BRIEF.md`  | Diseño de interfaz                      | ✅ |
+| `docs/BACKEND_SCHEMA.md`      | Esquema PostgreSQL                      | ✅ |
+| `docs/SIMULATION_MODEL.md`    | Modelo matemático                       | ✅ |
+| `docs/DATA_SOURCES.md`        | Procedencia de cada dato: qué es real, qué es estimado | ✅ |
+| `docs/ML_MODEL.md`            | Dataset, features, modelos y validación | ⏳ Pendiente (Tonny) |
+| `docs/SCIENTIFIC_EVIDENCE.md` | Fuentes y trazabilidad                  | ⏳ Pendiente (Tonny) |
+| `docs/AI_PIPELINE.md`         | Pipeline de IA/RAG                      | ⏳ Pendiente (Tonny) |
+| `docs/REPORT_SCHEMA.md`       | Estructura de reportes                  | ⏳ Pendiente (Tonny) |
+| `docs/REGULATORY_RULES.md`    | Reglas y fuentes regulatorias           | ⏳ Pendiente (Tonny) |
+| `docs/IMPLEMENTATION_PLAN.md` | Plan de implementación                  | ✅ |
+| `docs/adr/`                   | Decisiones de arquitectura, incluyendo por qué el motor es TS y no Python | ✅ |
 
 ---
 

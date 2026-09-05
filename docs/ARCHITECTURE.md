@@ -6,7 +6,8 @@
 graph TB
     U["👤 Formulador / Investigador"]
     subgraph DS["DERMASENSE"]
-        APP["Next.js App<br/>(Vercel)"]
+        APP["Next.js App<br/>(Vercel) — Max"]
+        PY["Backend Python/FastAPI<br/>(a desplegar) — Tonny"]
     end
     SB[("Supabase<br/>PostgreSQL + Auth")]
     AI["Claude API<br/>claude-sonnet-5"]
@@ -14,15 +15,29 @@ graph TB
     U -->|"HTTPS"| APP
     APP -->|"SDK / JWT + RLS"| SB
     APP -->|"HTTPS server-side"| AI
+    APP -->|"HTTPS · ver API_CONTRACT.md"| PY
+    PY -->|"JWT compartido"| SB
 
     style DS fill:#0f172a,stroke:#38bdf8,color:#e2e8f0
     style APP fill:#1e293b,stroke:#38bdf8,color:#e2e8f0
+    style PY fill:#1e293b,stroke:#a78bfa,color:#e2e8f0
 ```
 
-**Decisión clave:** el motor de simulación corre **en el navegador**, no en el servidor.
-Es TypeScript puro y determinista, así que no hay latencia de red, la interacción con el
-timeline es instantánea y el costo de infraestructura es cero. El servidor solo persiste
-resultados y llama a la IA.
+**Decisión clave (ADR-001, reafirmada en [ADR-004](adr/004-arquitectura-hibrida-ts-python.md)):**
+el motor de simulación corre **en el navegador**, no en ningún servidor. Es TypeScript puro
+y determinista, así que no hay latencia de red, la interacción con el timeline es
+instantánea y el costo de infraestructura es cero.
+
+**Arquitectura híbrida de dos backends**, con reparto de trabajo del equipo:
+
+| Backend | Dueño | Responsabilidad | NO hace |
+|---|---|---|---|
+| Next.js Route Handlers (Vercel) | Max | Persistencia de simulaciones, reporte con Claude, catálogo | No simula, no hace ML |
+| FastAPI (Python) | Tonny | Investigación de ingredientes (RAG), predicción ML/QSPR, reportes Excel, revisión regulatoria | No recalcula la difusión — la recibe ya calculada |
+
+El contrato exacto entre el frontend y el backend Python está en
+[API_CONTRACT.md](API_CONTRACT.md), para que ambos lados avancen en paralelo sin
+bloquearse.
 
 ---
 

@@ -165,12 +165,17 @@ demo.
 
 | Sitio | SC (µm) | Epidermis viable (µm) | Dermis (µm) | Nivel | Nota |
 |---|---|---|---|---|---|
-| **Antebrazo (volar)** | 15-20 | 50-80 | 1000-1500 | 🔶 | Sitio de referencia de la mayoría de estudios *in vitro*. Valor por defecto |
+| **Abdomen** | 13-18 | 50-80 | 1500-2500 | 🔶 | **Valor por defecto** (decisión de equipo, 2026-09-05). Frecuente en estudios *ex vivo* con piel de cirugía |
+| **Antebrazo (volar)** | 15-20 | 50-80 | 1000-1500 | 🔶 | Sitio de referencia de la mayoría de estudios *in vitro*, incluido el dataset de Flynn (§8) |
 | **Rostro (mejilla)** | 10-15 | 40-60 | 900-1200 | 🔶 | Barrera más delgada: mayor penetración |
 | **Frente** | 12-16 | 50-70 | 1000-1400 | 🔶 | Alta densidad sebácea |
 | **Cuero cabelludo** | 15-20 | 50-70 | 1200-1800 | 🔶 | Alta densidad folicular: la vía anexial, que el modelo NO simula, pesa más aquí |
-| **Abdomen** | 13-18 | 50-80 | 1500-2500 | 🔶 | Frecuente en estudios *ex vivo* con piel de cirugía |
 | **Palma / planta** | 400-600 | 300-500 | 1500-2000 | 🔶 | Barrera extrema. Caso límite útil para demostrar el contraste |
+
+> **Nota de consistencia:** el default es Abdomen porque así lo fijó el equipo en el README.
+> La validación contra el dataset de Flynn (§8) usa datos de antebrazo, así que al
+> presentar el gráfico predicho-vs-medido debe aclararse que corresponde a un sitio
+> distinto del que ve el usuario por defecto en el simulador.
 
 > **Estado:** todos los valores son 🔶 **Literatura**. Son rangos ampliamente reportados y
 > el ordenamiento relativo entre sitios es sólido, pero **falta fijar la cita exacta de cada
