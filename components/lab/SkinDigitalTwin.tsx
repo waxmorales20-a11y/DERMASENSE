@@ -14,6 +14,14 @@ import {
   CircleCheck,
 } from 'lucide-react';
 import { speakFullSimulation, stopSpeech } from '@/lib/narrator-speech';
+import { createTorsoMesh } from '@/lib/render/torso-mesh';
+import {
+  heightToNormalMap,
+  makeRandom,
+  paintReaction,
+  paintSkinBase,
+  paintSkinBump,
+} from '@/lib/render/skin-texture';
 
 // Motor de render: Babylon.js. El abdomen es un elipsoide esculpido (superficie
 // organica continua, sin caras planas) y el corte histologico son discos de alta
@@ -86,6 +94,14 @@ interface ReactionState {
   severe: boolean;
 }
 
+/** Detalle histológico (corneocitos, capilares, adipocitos, colágeno) atado a una capa. */
+interface DetailGroup {
+  layerIndex: number;
+  maxAlpha: number;
+  apply: (alpha: number) => void;
+  pulse?: (intensity: number) => void;
+}
+
 interface SceneRefs {
   engine: BABYLON.Engine;
   scene: BABYLON.Scene;
@@ -107,6 +123,10 @@ interface SceneRefs {
   macroRadius: number;
   patchNormal: BABYLON.Vector3;
   patchUv: { u: number; v: number };
+  /** Piel base ya pintada: se reutiliza como fondo al repintar el eritema. */
+  skinBaseCanvas: HTMLCanvasElement;
+  details: DetailGroup[];
+  plume: BABYLON.Mesh;
 }
 
 export const SkinDigitalTwin: React.FC = () => {
@@ -185,7 +205,7 @@ export const SkinDigitalTwin: React.FC = () => {
 
     // A. Camara orbital con inercia alta: el desplazamiento nunca es brusco.
     const macroTarget = new BABYLON.Vector3(0, -0.05, 0);
-    const macroRadius = 4.2;
+    const macroRadius = 4.9;
     const camera = new BABYLON.ArcRotateCamera(
       'camera',
       -Math.PI / 2,
@@ -240,77 +260,54 @@ export const SkinDigitalTwin: React.FC = () => {
     });
     glow.intensity = 0.35;
 
-    // C. Abdomen: esfera de alta teselacion esculpida como tronco humano.
-    const torso = BABYLON.MeshBuilder.CreateSphere(
-      'torso',
-      { diameter: 2, segments: 128 },
-      scene
-    );
+    // C. Abdomen humano: malla parametrica construida a partir del perfil
+    // anatomico real (torax ancho, cintura estrecha, caderas), no una esfera.
+    const torso = createTorsoMesh(scene, 'torso');
 
-    const positions = torso.getVerticesData(BABYLON.VertexBuffer.PositionKind);
-    if (positions) {
-      for (let i = 0; i < positions.length; i += 3) {
-        const x = positions[i];
-        const y = positions[i + 1];
-        const z = positions[i + 2];
-
-        // Elipsoide base del tronco: mas alto que ancho y aplanado en profundidad.
-        let nx = x * 1.02;
-        const ny = y * 1.5;
-        let nz = z * 0.62;
-
-        // Estrechamiento de cintura y ensanchamiento toracico.
-        const waist = 1 - Math.exp(-((ny + 0.15) * (ny + 0.15)) / 0.5) * 0.12;
-        nx *= waist;
-        nz *= waist;
-
-        // Solo la cara anterior recibe el relieve abdominal.
-        const front = clamp01(z);
-
-        // Linea alba: surco medial.
-        nz -= Math.exp(-Math.abs(x) * 9) * 0.05 * front;
-
-        // Rectos abdominales e intersecciones tendinosas.
-        const lateral = Math.abs(x);
-        if (lateral > 0.06 && lateral < 0.62 && ny > -0.95 && ny < 0.8) {
-          const belly = 1 - Math.abs(lateral - 0.3) * 1.6;
-          nz += (Math.cos(ny * 6.4) * 0.018 + 0.028) * front * Math.max(0, belly);
-        }
-
-        // Arco costal.
-        if (ny > 0.5 && ny < 1.15) {
-          const rib = (ny - 0.5) / 0.65;
-          nz += Math.sin(rib * Math.PI) * (0.02 + lateral * 0.03) * front;
-        }
-
-        // Ombligo.
-        const navel = Math.hypot(x, ny + 0.18);
-        if (navel < 0.16) {
-          nz -= Math.exp(-navel * 16) * 0.09 * front;
-        }
-
-        // Micro-relieve cutaneo: rompe cualquier lectura de superficie perfecta.
-        const skinDetail = tissueNoise(x * 2.2, ny * 2.2, z * 2.2) * 0.004;
-
-        positions[i] = nx + skinDetail * 0.3;
-        positions[i + 1] = ny;
-        positions[i + 2] = nz + skinDetail;
-      }
-
-      torso.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
-      torso.createNormals(true);
-    }
-
-    // Textura de piel dibujada por codigo (eritema incluido).
+    // Textura de piel dibujada por codigo: tono, poros, vello y venas subcutaneas.
+    const TEX_SIZE = 2048;
     const skinTexture = new BABYLON.DynamicTexture(
       'skin',
-      { width: 1024, height: 1024 },
+      { width: TEX_SIZE, height: TEX_SIZE },
       scene,
       true
     );
 
+    // La piel base se pinta una sola vez en un lienzo aparte y luego se usa como
+    // fondo cada vez que hay que repintar la reaccion: repintar poros y vello en
+    // cada frame de tiempo seria carisimo.
+    const skinBaseCanvas = document.createElement('canvas');
+    skinBaseCanvas.width = TEX_SIZE;
+    skinBaseCanvas.height = TEX_SIZE;
+    const baseCtx = skinBaseCanvas.getContext('2d');
+    if (baseCtx) paintSkinBase(baseCtx, TEX_SIZE, TEX_SIZE);
+
+    const skinCtx = skinTexture.getContext() as unknown as CanvasRenderingContext2D;
+    skinCtx.drawImage(skinBaseCanvas, 0, 0);
+    skinTexture.update();
+
+    // Relieve real de la piel (poros y reticula cutanea) como mapa de normales.
+    const bumpTexture = new BABYLON.DynamicTexture(
+      'skinBump',
+      { width: 1024, height: 1024 },
+      scene,
+      true
+    );
+    const heightCanvas = document.createElement('canvas');
+    heightCanvas.width = 1024;
+    heightCanvas.height = 1024;
+    const heightCtx = heightCanvas.getContext('2d');
+    const bumpCtx = bumpTexture.getContext() as unknown as CanvasRenderingContext2D;
+    if (heightCtx) {
+      paintSkinBump(heightCtx, 1024, 1024);
+      heightToNormalMap(heightCtx, bumpCtx, 1024);
+    }
+    bumpTexture.update();
+    bumpTexture.level = 0.6;
+
     const torsoMaterial = new BABYLON.PBRMaterial('skinMat', scene);
     torsoMaterial.albedoTexture = skinTexture;
+    torsoMaterial.bumpTexture = bumpTexture;
     torsoMaterial.metallic = 0;
     torsoMaterial.roughness = 0.62;
     torsoMaterial.subSurface.isTranslucencyEnabled = true;
@@ -454,6 +451,214 @@ export const SkinDigitalTwin: React.FC = () => {
       return { mesh, material, baseColor, depth: def.depth, revealAt: def.revealAt };
     });
 
+    // F-bis. Tejido real dentro de cada capa: corneocitos, capilares con flujo,
+    // fibras de colageno y adipocitos. Se dibujan con thin instances (una sola
+    // llamada de dibujo por grupo) para que no cueste rendimiento.
+    const details: DetailGroup[] = [];
+    const detailRandom = makeRandom(9182736);
+
+    const layerCenterZ = (idx: number) =>
+      -(LAYER_DEFS[idx].depth + LAYER_DEFS[idx].thickness / 2);
+
+    // Corneocitos: escamas planas y solapadas del estrato corneo.
+    const corneocyte = BABYLON.MeshBuilder.CreateDisc(
+      'corneocyte',
+      { radius: 0.014, tessellation: 6 },
+      scene
+    );
+    const corneocyteMat = new BABYLON.PBRMaterial('corneocyteMat', scene);
+    corneocyteMat.albedoColor = BABYLON.Color3.FromHexString('#E8D9B5');
+    corneocyteMat.metallic = 0;
+    corneocyteMat.roughness = 0.85;
+    corneocyteMat.alpha = 0;
+    corneocyteMat.backFaceCulling = false;
+    corneocyte.material = corneocyteMat;
+    corneocyte.parent = biopsyRoot;
+    corneocyte.isPickable = false;
+
+    {
+      const count = 150;
+      const matrices = new Float32Array(count * 16);
+      for (let i = 0; i < count; i++) {
+        const angle = detailRandom() * Math.PI * 2;
+        const radius = Math.sqrt(detailRandom()) * 0.1;
+        const matrix = BABYLON.Matrix.RotationZ(detailRandom() * Math.PI).multiply(
+          BABYLON.Matrix.Translation(
+            Math.cos(angle) * radius,
+            Math.sin(angle) * radius,
+            layerCenterZ(0) + (detailRandom() - 0.5) * 0.012
+          )
+        );
+        matrix.copyToArray(matrices, i * 16);
+      }
+      corneocyte.thinInstanceSetBuffer('matrix', matrices, 16);
+    }
+
+    details.push({
+      layerIndex: 0,
+      maxAlpha: 0.9,
+      apply: (alpha) => {
+        corneocyteMat.alpha = alpha;
+        corneocyte.isVisible = alpha > 0.01;
+      },
+    });
+
+    // Capilares dermicos: tubos meandricos con flujo sanguineo luminoso.
+    const capillaryMat = new BABYLON.PBRMaterial('capillaryMat', scene);
+    capillaryMat.albedoColor = BABYLON.Color3.FromHexString('#8E2436');
+    capillaryMat.emissiveColor = BABYLON.Color3.FromHexString('#3B0A12');
+    capillaryMat.metallic = 0;
+    capillaryMat.roughness = 0.35;
+    capillaryMat.alpha = 0;
+
+    const capillaries: BABYLON.Mesh[] = [];
+    for (let c = 0; c < 6; c++) {
+      const path: BABYLON.Vector3[] = [];
+      const baseY = -0.08 + c * 0.032;
+      const depthJitter = (detailRandom() - 0.5) * 0.02;
+      for (let s = 0; s <= 28; s++) {
+        const t = s / 28;
+        path.push(
+          new BABYLON.Vector3(
+            -0.105 + t * 0.21,
+            baseY + Math.sin(t * Math.PI * 3 + c) * 0.022,
+            layerCenterZ(2) + depthJitter + Math.cos(t * Math.PI * 2 + c) * 0.008
+          )
+        );
+      }
+
+      const tube = BABYLON.MeshBuilder.CreateTube(
+        `capillary-${c}`,
+        { path, radius: 0.0026 + detailRandom() * 0.0016, tessellation: 12, cap: BABYLON.Mesh.CAP_ALL },
+        scene
+      );
+      tube.material = capillaryMat;
+      tube.parent = biopsyRoot;
+      tube.isPickable = false;
+      tube.isVisible = false;
+      capillaries.push(tube);
+    }
+
+    details.push({
+      layerIndex: 2,
+      maxAlpha: 1,
+      apply: (alpha) => {
+        capillaryMat.alpha = alpha;
+        capillaries.forEach((tube) => {
+          tube.isVisible = alpha > 0.01;
+        });
+      },
+      // El flujo late: mas intenso cuanto mayor es la vasodilatacion inflamatoria.
+      pulse: (intensity) => {
+        // Vasodilatacion: los capilares se engrosan y el flujo brilla mas.
+        capillaryMat.emissiveColor.copyFromFloats(0.22 + intensity * 0.6, 0.04, 0.07);
+        capillaryMat.albedoColor.copyFromFloats(0.56 + intensity * 0.35, 0.14, 0.21);
+        const dilation = 1 + intensity * 0.85;
+        capillaries.forEach((tube) => tube.scaling.set(1, dilation, dilation));
+      },
+    });
+
+    // Fibras de colageno de la dermis.
+    const collagenLines: BABYLON.Vector3[][] = [];
+    for (let f = 0; f < 26; f++) {
+      const line: BABYLON.Vector3[] = [];
+      const y = -0.1 + detailRandom() * 0.2;
+      const z = layerCenterZ(2) + (detailRandom() - 0.5) * 0.04;
+      for (let s = 0; s <= 12; s++) {
+        const t = s / 12;
+        line.push(
+          new BABYLON.Vector3(
+            -0.11 + t * 0.22,
+            y + Math.sin(t * Math.PI * 4 + f) * 0.012,
+            z + Math.cos(t * Math.PI * 3 + f) * 0.006
+          )
+        );
+      }
+      collagenLines.push(line);
+    }
+
+    const collagen = BABYLON.MeshBuilder.CreateLineSystem(
+      'collagen',
+      { lines: collagenLines },
+      scene
+    );
+    collagen.color = BABYLON.Color3.FromHexString('#E9C7B4');
+    collagen.parent = biopsyRoot;
+    collagen.isPickable = false;
+    collagen.isVisible = false;
+
+    details.push({
+      layerIndex: 2,
+      maxAlpha: 0.35,
+      apply: (alpha) => {
+        collagen.alpha = alpha;
+        collagen.isVisible = alpha > 0.01;
+      },
+    });
+
+    // Adipocitos de la hipodermis: lobulillos de grasa.
+    const adipocyte = BABYLON.MeshBuilder.CreateSphere(
+      'adipocyte',
+      { diameter: 0.028, segments: 12 },
+      scene
+    );
+    const adipocyteMat = new BABYLON.PBRMaterial('adipocyteMat', scene);
+    adipocyteMat.albedoColor = BABYLON.Color3.FromHexString('#F0D48A');
+    adipocyteMat.metallic = 0;
+    adipocyteMat.roughness = 0.5;
+    adipocyteMat.subSurface.isTranslucencyEnabled = true;
+    adipocyteMat.subSurface.translucencyIntensity = 0.4;
+    adipocyteMat.alpha = 0;
+    adipocyte.material = adipocyteMat;
+    adipocyte.parent = biopsyRoot;
+    adipocyte.isPickable = false;
+
+    {
+      const count = 90;
+      const matrices = new Float32Array(count * 16);
+      for (let i = 0; i < count; i++) {
+        const angle = detailRandom() * Math.PI * 2;
+        const radius = Math.sqrt(detailRandom()) * 0.1;
+        const scale = 0.7 + detailRandom() * 0.7;
+        const matrix = BABYLON.Matrix.Scaling(scale, scale, scale).multiply(
+          BABYLON.Matrix.Translation(
+            Math.cos(angle) * radius,
+            Math.sin(angle) * radius,
+            layerCenterZ(3) + (detailRandom() - 0.5) * 0.026
+          )
+        );
+        matrix.copyToArray(matrices, i * 16);
+      }
+      adipocyte.thinInstanceSetBuffer('matrix', matrices, 16);
+    }
+
+    details.push({
+      layerIndex: 3,
+      maxAlpha: 0.95,
+      apply: (alpha) => {
+        adipocyteMat.alpha = alpha;
+        adipocyte.isVisible = alpha > 0.01;
+      },
+    });
+
+    // Pluma de difusion: el volumen de tejido que el activo ya ha invadido,
+    // en forma de cono porque el frente se ensancha menos conforme profundiza.
+    const plume = BABYLON.MeshBuilder.CreateCylinder(
+      'plume',
+      { height: 1, diameterTop: 0.2, diameterBottom: 0.06, tessellation: 48 },
+      scene
+    );
+    const plumeMat = new BABYLON.StandardMaterial('plumeMat', scene);
+    plumeMat.emissiveColor = ACCENT;
+    plumeMat.disableLighting = true;
+    plumeMat.alpha = 0;
+    plumeMat.alphaMode = BABYLON.Engine.ALPHA_ADD;
+    plumeMat.backFaceCulling = false;
+    plume.material = plumeMat;
+    plume.parent = biopsyRoot;
+    plume.rotation.x = Math.PI / 2; // el eje del cono sigue la normal de la piel
+    plume.isPickable = false;
+
     // Frente de difusion: disco luminoso que desciende a la profundidad del motor.
     const frontDisc = BABYLON.MeshBuilder.CreateDisc(
       'front',
@@ -543,6 +748,9 @@ export const SkinDigitalTwin: React.FC = () => {
       macroRadius,
       patchNormal,
       patchUv,
+      skinBaseCanvas,
+      details,
+      plume,
     };
 
     // H. Bucle de render: zoom cinematico, apertura del corte y reaccion quimica.
@@ -631,13 +839,42 @@ export const SkinDigitalTwin: React.FC = () => {
         );
         layer.material.albedoColor.copyFrom(workColor);
 
-        const emissive = load * 0.12 + inflame * (0.35 + breath * 0.3);
+        // Destello extra en la capa que el frente esta atravesando ahora mismo:
+        // asi se ve exactamente por donde va entrando el quimico.
+        const frontAbsolute = lerp(STACK_TOP, STACK_BOTTOM, reaction.frontDepth);
+        const def = LAYER_DEFS[idx];
+        const isFrontHere =
+          frontAbsolute >= def.depth && frontAbsolute <= def.depth + def.thickness;
+        const frontGlow = isFrontHere ? 0.22 + breath * 0.28 : 0;
+
+        const emissive = load * 0.12 + inflame * (0.35 + breath * 0.3) + frontGlow;
         layer.material.emissiveColor.copyFromFloats(
           (inflame > 0.05 ? (reaction.severe ? 0.86 : 0.94) : 0.13) * emissive,
           (inflame > 0.05 ? 0.15 : 0.83) * emissive,
           (inflame > 0.05 ? 0.15 : 0.93) * emissive
         );
       });
+
+      // El tejido de cada capa (corneocitos, capilares, colageno, adipocitos)
+      // aparece con su capa y late con la vasodilatacion inflamatoria.
+      refs.details.forEach((detail) => {
+        const reveal = layerReveal(eased, LAYER_DEFS[detail.layerIndex].revealAt);
+        detail.apply(reveal * detail.maxAlpha);
+        detail.pulse?.(reaction.inflammation * (0.6 + breath * 0.4));
+      });
+
+      // La pluma crece hasta la profundidad alcanzada por el activo.
+      const plumeLength = Math.max(
+        0.012,
+        (STACK_BOTTOM - STACK_TOP) * reaction.frontDepth
+      );
+      refs.plume.scaling.y += (plumeLength - refs.plume.scaling.y) * 0.06;
+      refs.plume.position.z = -(STACK_TOP + refs.plume.scaling.y / 2);
+      const plumeMaterial = refs.plume.material as BABYLON.StandardMaterial;
+      plumeMaterial.alpha =
+        smoothstep((eased - 0.28) / 0.25) * (0.1 + breath * 0.14) * (0.45 + reaction.surfaceLoad * 0.55);
+      plumeMaterial.emissiveColor = reaction.inflammation > 0.4 ? INFLAMED : ACCENT;
+      refs.plume.isVisible = plumeMaterial.alpha > 0.01;
 
       // Frente de difusion a la profundidad exacta que reporta el motor.
       const frontZ = -lerp(STACK_TOP, STACK_BOTTOM, reaction.frontDepth);
@@ -763,78 +1000,47 @@ export const SkinDigitalTwin: React.FC = () => {
     irritationIndex,
   ]);
 
-  // 3. Eritema pintado sobre la textura de piel del abdomen
+  // 3. Reaccion pintada sobre la piel: se repinta solo el eritema, usando la
+  // piel base (poros, vello, venas) ya renderizada como fondo.
   useEffect(() => {
     const refs = sceneRef.current;
     if (!refs || !result || !currentFrame) return;
 
     const ctx = refs.skinTexture.getContext() as unknown as CanvasRenderingContext2D;
-    const w = 1024;
-    const h = 1024;
+    const size = refs.skinBaseCanvas.width;
 
-    const skinGrad = ctx.createRadialGradient(w * 0.5, h * 0.5, w * 0.1, w * 0.5, h * 0.5, w * 0.7);
-    skinGrad.addColorStop(0.0, '#D9A98D');
-    skinGrad.addColorStop(0.55, '#CF9D81');
-    skinGrad.addColorStop(1.0, '#A97A62');
-
-    ctx.fillStyle = skinGrad;
-    ctx.fillRect(0, 0, w, h);
-
-    // Poro y microtextura cutanea para que la piel no se lea plana.
-    ctx.save();
-    ctx.globalAlpha = 0.05;
-    for (let i = 0; i < 2200; i++) {
-      const px = Math.random() * w;
-      const py = Math.random() * h;
-      ctx.fillStyle = i % 2 === 0 ? '#8E5F45' : '#F0C3A6';
-      ctx.beginPath();
-      ctx.arc(px, py, Math.random() * 2.2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-
-    // UV exactas del parche, obtenidas por raycast sobre la malla esculpida.
-    const patchU = w * refs.patchUv.u;
-    const patchV = h * (1 - refs.patchUv.v);
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(refs.skinBaseCanvas, 0, 0);
 
     const currentTime = currentFrame.timeHours;
     const lagTime = metrics?.lagTimeHours ?? 2.0;
+    const visible = isErythema && currentTime >= Math.min(lagTime * 0.4, 1.0);
+    const timeFactor = visible ? Math.min(1, currentTime / (lagTime + 3)) : 0;
 
-    if (isErythema && currentTime >= Math.min(lagTime * 0.4, 1.0)) {
-      const timeFactor = Math.min(1.0, currentTime / (lagTime + 3.0));
-      const rashRadius = (isSevereBurn ? 150 : 105) * timeFactor;
+    paintReaction(ctx, {
+      width: size,
+      height: size,
+      patchU: refs.patchUv.u,
+      patchV: refs.patchUv.v,
+      erythema: timeFactor,
+      severe: isSevereBurn,
+      rashRadius: (isSevereBurn ? 260 : 190) * timeFactor,
+    });
 
-      ctx.save();
-      const rashGrad = ctx.createRadialGradient(patchU, patchV, 4, patchU, patchV, rashRadius);
-
-      if (isSevereBurn) {
-        rashGrad.addColorStop(0.0, 'rgba(185, 28, 28, 0.95)');
-        rashGrad.addColorStop(0.4, 'rgba(220, 38, 38, 0.8)');
-        rashGrad.addColorStop(0.72, 'rgba(239, 68, 68, 0.5)');
-        rashGrad.addColorStop(1.0, 'rgba(239, 68, 68, 0)');
-      } else {
-        rashGrad.addColorStop(0.0, 'rgba(239, 68, 68, 0.7)');
-        rashGrad.addColorStop(0.5, 'rgba(248, 113, 113, 0.4)');
-        rashGrad.addColorStop(1.0, 'rgba(248, 113, 113, 0)');
-      }
-
-      ctx.fillStyle = rashGrad;
-      ctx.beginPath();
-      ctx.arc(patchU, patchV, rashRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(patchU, patchV, 26, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(34, 211, 238, 0.55)';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    ctx.restore();
+    refs.burnLight.intensity = visible ? (isSevereBurn ? 2.8 : 1.4) * timeFactor : 0;
+    refs.burnLight.diffuse = isSevereBurn ? SEVERE : INFLAMED;
 
     refs.skinTexture.update();
   }, [result, currentFrame, isErythema, isSevereBurn, metrics]);
+  // 4-bis. Al pulsar Play, el asistente narra la simulacion completa en voz alta.
+  // Al pausar, la voz se detiene para no hablar sobre una escena congelada.
+  useEffect(() => {
+    if (!isPlaying) {
+      stopSpeech();
+      return;
+    }
+    if (result) speakFullSimulation(result);
+  }, [isPlaying, result]);
 
   // 4. Zoom automatico y lento al pulsar Play: la camara viaja sola hasta el
   // area donde ocurre la reaccion quimica.
@@ -938,6 +1144,7 @@ export const SkinDigitalTwin: React.FC = () => {
         )}
       </div>
 
+      {!isFullscreen && (
       <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[250px] flex-col gap-1.5 rounded-xl border border-border bg-surface/85 p-2.5 shadow-xl backdrop-blur-md">
         <div className="flex items-center justify-between text-[11px] font-semibold text-accent">
           <span>{viewMode === 'macro' ? 'ABDOMEN HUMANO' : 'CORTE CAPA POR CAPA'}</span>
@@ -983,7 +1190,9 @@ export const SkinDigitalTwin: React.FC = () => {
         )}
       </div>
 
-      {isErythema && (
+      )}
+
+      {!isFullscreen && isErythema && (
         <div className="pointer-events-none absolute right-3 top-14 z-10 flex max-w-[240px] items-center gap-2 rounded-xl border border-risk-high/50 bg-surface/90 p-2.5 text-xs shadow-xl backdrop-blur-md">
           <Flame className="h-4 w-4 shrink-0 text-risk-high" />
           <div className="flex flex-col text-[10px] leading-tight">
@@ -1041,9 +1250,11 @@ export const SkinDigitalTwin: React.FC = () => {
         </div>
       </div>
 
-      <div className="pointer-events-none absolute bottom-3 left-3 z-10 text-[9px] text-text-muted">
-        <span>* Rueda del ratón: viaje lento entre el abdomen y las capas celulares.</span>
-      </div>
+      {!isFullscreen && (
+        <div className="pointer-events-none absolute bottom-3 left-3 z-10 text-[9px] text-text-muted">
+          <span>* Rueda del ratón: viaje lento entre el abdomen y las capas celulares.</span>
+        </div>
+      )}
     </div>
   );
 };
