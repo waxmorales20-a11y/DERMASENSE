@@ -17,6 +17,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import Link from 'next/link';
+import { RegulatoryStatus } from '@/components/lab/RegulatoryStatus';
 
 export const ChemicalFilters: React.FC = () => {
   const {
@@ -167,6 +168,9 @@ export const ChemicalFilters: React.FC = () => {
           <span>{isRunning ? 'Calculando...' : 'Simular'}</span>
         </button>
       </div>
+
+      {/* Revisión regulatoria preliminar (backend Python, degradación elegante) */}
+      <RegulatoryStatus />
     </div>
   );
 };

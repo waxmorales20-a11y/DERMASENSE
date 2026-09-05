@@ -350,10 +350,10 @@ export const ScientificNarrator: React.FC = () => {
         <div className="flex items-center gap-2">
           {isSpeaking && (
             <div className="flex items-end gap-0.5 h-3.5 px-1.5 py-0.5 rounded bg-surface border border-accent/30">
-              <span className="w-1 bg-accent rounded-full animate-bounce [animation-delay:0ms] h-full" />
-              <span className="w-1 bg-accent rounded-full animate-bounce [animation-delay:150ms] h-2/3" />
-              <span className="w-1 bg-accent rounded-full animate-bounce [animation-delay:300ms] h-full" />
-              <span className="w-1 bg-accent rounded-full animate-bounce [animation-delay:75ms] h-1/2" />
+              <span className="h-full w-1 rounded-full bg-accent animate-voice-bar [animation-delay:0ms]" />
+              <span className="h-2/3 w-1 rounded-full bg-accent animate-voice-bar [animation-delay:150ms]" />
+              <span className="h-full w-1 rounded-full bg-accent animate-voice-bar [animation-delay:300ms]" />
+              <span className="h-1/2 w-1 rounded-full bg-accent animate-voice-bar [animation-delay:75ms]" />
             </div>
           )}
 

@@ -91,6 +91,22 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Medidor de voz: oscilacion suave, sin rebote */
+@keyframes voice-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.animate-voice-bar {
+  transform-origin: bottom;
+  animation: voice-bar 900ms cubic-bezier(0.33, 1, 0.68, 1) infinite;
+}
+
 /* Cifras tabulares obligatorias en datos numericos comparables */
 .tabular-nums,
 [data-tabular-nums],

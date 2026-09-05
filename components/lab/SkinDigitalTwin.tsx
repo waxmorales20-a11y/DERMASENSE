@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import * as BABYLON from '@babylonjs/core';
 import { useLabStore } from '@/lib/store/useLabStore';
 import {
   Layers,
@@ -16,99 +15,103 @@ import {
 } from 'lucide-react';
 import { speakFullSimulation, stopSpeech } from '@/lib/narrator-speech';
 
-// Geometria del torso en unidades de escena. Sirve tanto para construir la malla
-// como para encuadrar la camara de forma proporcionada en cualquier viewport.
-const TORSO_WIDTH = 4.0;
-const TORSO_HEIGHT = 5.0;
-const TORSO_SCALE = 0.85;
-const CAMERA_FOV = 40;
+// Motor de render: Babylon.js. El abdomen es un elipsoide esculpido (superficie
+// organica continua, sin caras planas) y el corte histologico son discos de alta
+// teselacion con relieve, no cajas.
 
-// Punto clinico de aplicacion sobre el abdomen (ya escalado).
-const PATCH_X = 0.65 * TORSO_SCALE;
-const PATCH_Y = -0.15 * TORSO_SCALE;
-const PATCH_Z = 0.73 * TORSO_SCALE;
-
-// Distancia de camara en la vista celular (corte capa por capa).
-const MICRO_DISTANCE = 1.05;
-
-// Umbral a partir del cual la vista se considera microscopica.
+const MICRO_DISTANCE = 0.62; // radio de camara en la vista celular
 const MICRO_VIEW_THRESHOLD = 0.45;
+const AUTO_ZOOM_TARGET = 0.85; // adonde viaja la camara sola al pulsar Play
 
-// Zoom automatico al que viaja la camara al pulsar Play.
-const AUTO_ZOOM_TARGET = 0.85;
-
-// Corte histologico: cuatro capas que se seccionan de forma escalonada.
-// `revealAt` marca el punto del viaje de camara en el que cada capa se abre.
+// Corte histologico. `revealAt` marca el punto del viaje de camara en el que
+// cada capa se secciona; `depth` es su offset a lo largo de la normal de la piel.
 const LAYER_DEFS = [
-  { key: 'sc', name: 'Estrato Corneo', y: 0.15, h: 0.07, color: 0xd4af37, rough: 0.4, revealAt: 0.30 },
-  { key: 've', name: 'Epidermis Viable', y: 0.05, h: 0.11, color: 0xe0a88a, rough: 0.6, revealAt: 0.44 },
-  { key: 'de', name: 'Dermis', y: -0.10, h: 0.18, color: 0xc97b7b, rough: 0.7, revealAt: 0.58 },
-  { key: 'hy', name: 'Hipodermis', y: -0.25, h: 0.12, color: 0xe8c87e, rough: 0.8, revealAt: 0.72 },
+  { key: 'sc', label: 'Estrato córneo', depth: 0.0, thickness: 0.022, color: '#D4AF37', revealAt: 0.30 },
+  { key: 've', label: 'Epidermis viable', depth: 0.026, thickness: 0.034, color: '#E0A88A', revealAt: 0.44 },
+  { key: 'de', label: 'Dermis', depth: 0.068, thickness: 0.056, color: '#C97B7B', revealAt: 0.58 },
+  { key: 'hy', label: 'Hipodermis', depth: 0.132, thickness: 0.042, color: '#E8C87E', revealAt: 0.72 },
 ];
+
+const STACK_TOP = LAYER_DEFS[0].depth;
+const STACK_BOTTOM = LAYER_DEFS[3].depth + LAYER_DEFS[3].thickness;
 
 const REVEAL_SPAN = 0.16;
 
-// Extremos verticales de la pila de capas, usados por el frente de difusion.
-const STACK_TOP_Y = 0.185;
-const STACK_BOTTOM_Y = -0.31;
+const ACCENT = BABYLON.Color3.FromHexString('#22D3EE');
+const INFLAMED = BABYLON.Color3.FromHexString('#EF4444');
+const SEVERE = BABYLON.Color3.FromHexString('#DC2626');
+const CHEMICAL_TINT = BABYLON.Color3.FromHexString('#1D6E8E');
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
-// Curva de aceleracion cinematografica: arranque y frenada suaves.
 function smoothstep(t: number): number {
   const x = clamp01(t);
   return x * x * (3 - 2 * x);
 }
 
-// Progreso de apertura de una capa concreta para un valor de zoom dado.
 function layerReveal(easedZoom: number, revealAt: number): number {
   return smoothstep((easedZoom - revealAt) / REVEAL_SPAN);
 }
 
-interface CellLayer {
-  mesh: THREE.Mesh;
-  material: THREE.MeshStandardMaterial;
-  baseY: number;
-  baseColor: number;
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+// Ruido suave y determinista para dar irregularidad organica a los tejidos.
+function tissueNoise(x: number, y: number, z: number): number {
+  return (
+    Math.sin(x * 9.1 + y * 4.7) * 0.5 +
+    Math.sin(y * 7.3 + z * 5.9) * 0.3 +
+    Math.sin(z * 11.2 + x * 3.4) * 0.2
+  );
+}
+
+interface SceneLayer {
+  mesh: BABYLON.Mesh;
+  material: BABYLON.PBRMaterial;
+  baseColor: BABYLON.Color3;
+  depth: number;
   revealAt: number;
 }
 
-// Estado quimico leido del motor y consumido por el loop de animacion.
-// Ningun valor se calcula aqui: todos derivan de `result` (motor determinista).
+// Estado quimico leido del motor y consumido por el bucle de render.
+// Ningun valor se calcula aqui: todos provienen de `result`.
 interface ReactionState {
-  layerLoad: number[]; // saturacion 0..1 del activo por capa
-  frontDepth: number; // 0..1 profundidad del frente de difusion
-  surfaceLoad: number; // 0..1 masa restante en el vehiculo
-  inflammation: number; // 0..1 intensidad de la respuesta inflamatoria
+  layerLoad: number[];
+  frontDepth: number; // 0..1 dentro de la pila de capas
+  surfaceLoad: number;
+  inflammation: number;
   severe: boolean;
 }
 
-interface ThreeState {
-  scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
-  renderer: THREE.WebGLRenderer;
-  controls: OrbitControls;
-  torsoMesh: THREE.Mesh;
-  torsoMaterial: THREE.MeshStandardMaterial;
-  skinTextureCanvas: HTMLCanvasElement;
-  skinTexture: THREE.CanvasTexture;
-  patchRingMesh: THREE.Mesh;
-  dropletMesh: THREE.Mesh;
-  biopsyGroup: THREE.Group;
-  cutawayOpeningMesh: THREE.Mesh;
-  edgeHelper: THREE.LineSegments;
-  frontMesh: THREE.Mesh;
-  burnLight: THREE.PointLight;
-  particleSystem: THREE.Points;
-  cellLayers: CellLayer[];
-  macroDistance: number;
-  animFrameId: number;
+interface SceneRefs {
+  engine: BABYLON.Engine;
+  scene: BABYLON.Scene;
+  camera: BABYLON.ArcRotateCamera;
+  torso: BABYLON.Mesh;
+  torsoMaterial: BABYLON.PBRMaterial;
+  skinTexture: BABYLON.DynamicTexture;
+  patchDisc: BABYLON.Mesh;
+  dropletMesh: BABYLON.Mesh;
+  incisionRing: BABYLON.Mesh;
+  biopsyRoot: BABYLON.TransformNode;
+  layers: SceneLayer[];
+  frontDisc: BABYLON.Mesh;
+  particles: BABYLON.ParticleSystem;
+  glow: BABYLON.GlowLayer;
+  burnLight: BABYLON.PointLight;
+  macroTarget: BABYLON.Vector3;
+  microTarget: BABYLON.Vector3;
+  macroRadius: number;
+  patchNormal: BABYLON.Vector3;
+  patchUv: { u: number; v: number };
 }
 
 export const SkinDigitalTwin: React.FC = () => {
-  const mountRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
 
   const { result, currentFrameIndex, zoomLevel, setZoomLevel, isPlaying, getIngredient } =
     useLabStore();
@@ -126,11 +129,10 @@ export const SkinDigitalTwin: React.FC = () => {
   const viewMode: 'macro' | 'micro' = zoomLevel > MICRO_VIEW_THRESHOLD ? 'micro' : 'macro';
   const easedZoomUi = useMemo(() => smoothstep(zoomLevel), [zoomLevel]);
 
-  const threeStateRef = useRef<ThreeState | null>(null);
-  // Objetivo de zoom leido por el loop de render sin re-crear la escena.
+  const sceneRef = useRef<SceneRefs | null>(null);
   const zoomTargetRef = useRef<number>(zoomLevel);
-  // Zoom efectivamente renderizado: persigue al objetivo con interpolacion lenta.
   const zoomRenderRef = useRef<number>(zoomLevel);
+  const isDraggingRef = useRef<boolean>(false);
   const reactionRef = useRef<ReactionState>({
     layerLoad: [0, 0, 0, 0],
     frontDepth: 0,
@@ -143,7 +145,6 @@ export const SkinDigitalTwin: React.FC = () => {
     zoomTargetRef.current = zoomLevel;
   }, [zoomLevel]);
 
-  // Normalizador de concentracion: maximo sobre toda la simulacion.
   const maxConcentrationOverall = useMemo(() => {
     if (!result) return 1;
     let max = 1e-6;
@@ -164,439 +165,550 @@ export const SkinDigitalTwin: React.FC = () => {
     return max;
   }, [result]);
 
-  // 1. Inicializacion de la escena Three.js
+  // 1. Construccion de la escena Babylon
   useEffect(() => {
-    const container = mountRef.current;
-    if (!container) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    const width = container.clientWidth || 800;
-    const height = container.clientHeight || 600;
+    const engine = new BABYLON.Engine(canvas, true, {
+      preserveDrawingBuffer: true,
+      stencil: true,
+      antialias: true,
+    });
+    engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio || 1, 2));
 
-    // A. Escena en negro puro (modo laboratorio oscuro)
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.FogExp2(0x000000, 0.035);
+    const scene = new BABYLON.Scene(engine);
+    scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
+    scene.imageProcessingConfiguration.toneMappingEnabled = true;
+    scene.imageProcessingConfiguration.exposure = 1.1;
+    scene.imageProcessingConfiguration.contrast = 1.15;
 
-    // B. Camara perspectiva
-    const camera = new THREE.PerspectiveCamera(CAMERA_FOV, width / height, 0.1, 60);
-    const macroLookAt = new THREE.Vector3(0, -0.15 * TORSO_SCALE, 0);
+    // A. Camara orbital con inercia alta: el desplazamiento nunca es brusco.
+    const macroTarget = new BABYLON.Vector3(0, -0.05, 0);
+    const macroRadius = 4.2;
+    const camera = new BABYLON.ArcRotateCamera(
+      'camera',
+      -Math.PI / 2,
+      Math.PI / 2,
+      macroRadius,
+      macroTarget,
+      scene
+    );
+    camera.attachControl(canvas, true);
+    camera.inertia = 0.9;
+    camera.angularSensibilityX = 1800;
+    camera.angularSensibilityY = 1800;
+    camera.panningSensibility = 0; // sin paneo: el encuadre lo gobierna el zoom
+    camera.lowerRadiusLimit = 0.25;
+    camera.upperRadiusLimit = 8;
+    camera.minZ = 0.01;
+    camera.fov = 0.7;
+    // El zoom nativo de la rueda se sustituye por el zoom cinematico del store.
+    camera.inputs.removeByType('ArcRotateCameraMouseWheelInput');
 
-    // Distancia que encuadra el abdomen completo con margen, segun el aspecto real
-    // del viewport: el modelo nunca aparece gigante ni desbordado.
-    const computeMacroDistance = (aspect: number): number => {
-      const halfFov = THREE.MathUtils.degToRad(CAMERA_FOV) / 2;
-      const halfH = (TORSO_HEIGHT * TORSO_SCALE) / 2;
-      const halfW = (TORSO_WIDTH * TORSO_SCALE) / 2;
-      const distForHeight = halfH / Math.tan(halfFov);
-      const distForWidth = halfW / (Math.tan(halfFov) * Math.max(aspect, 0.2));
-      return Math.max(distForHeight, distForWidth) * 1.18;
+    // B. Iluminacion de laboratorio
+    const hemi = new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0, 1, 0), scene);
+    hemi.intensity = 0.35;
+    hemi.diffuse = BABYLON.Color3.FromHexString('#8FA3BF');
+    hemi.groundColor = BABYLON.Color3.FromHexString('#0A0A0C');
+
+    const keyLight = new BABYLON.DirectionalLight(
+      'key',
+      new BABYLON.Vector3(-0.6, -0.7, -0.8),
+      scene
+    );
+    keyLight.position = new BABYLON.Vector3(3, 3.5, 3.5);
+    keyLight.intensity = 2.6;
+    keyLight.diffuse = BABYLON.Color3.FromHexString('#FFF3E6');
+
+    const rimLight = new BABYLON.DirectionalLight(
+      'rim',
+      new BABYLON.Vector3(0.8, -0.2, -0.6),
+      scene
+    );
+    rimLight.intensity = 1.1;
+    rimLight.diffuse = ACCENT;
+
+    const burnLight = new BABYLON.PointLight('burn', new BABYLON.Vector3(0, 0, 1), scene);
+    burnLight.diffuse = INFLAMED;
+    burnLight.intensity = 0;
+    burnLight.range = 3;
+
+    const glow = new BABYLON.GlowLayer('glow', scene, {
+      mainTextureFixedSize: 512,
+      blurKernelSize: 48,
+    });
+    glow.intensity = 0.35;
+
+    // C. Abdomen: esfera de alta teselacion esculpida como tronco humano.
+    const torso = BABYLON.MeshBuilder.CreateSphere(
+      'torso',
+      { diameter: 2, segments: 128 },
+      scene
+    );
+
+    const positions = torso.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+    if (positions) {
+      for (let i = 0; i < positions.length; i += 3) {
+        const x = positions[i];
+        const y = positions[i + 1];
+        const z = positions[i + 2];
+
+        // Elipsoide base del tronco: mas alto que ancho y aplanado en profundidad.
+        let nx = x * 1.02;
+        const ny = y * 1.5;
+        let nz = z * 0.62;
+
+        // Estrechamiento de cintura y ensanchamiento toracico.
+        const waist = 1 - Math.exp(-((ny + 0.15) * (ny + 0.15)) / 0.5) * 0.12;
+        nx *= waist;
+        nz *= waist;
+
+        // Solo la cara anterior recibe el relieve abdominal.
+        const front = clamp01(z);
+
+        // Linea alba: surco medial.
+        nz -= Math.exp(-Math.abs(x) * 9) * 0.05 * front;
+
+        // Rectos abdominales e intersecciones tendinosas.
+        const lateral = Math.abs(x);
+        if (lateral > 0.06 && lateral < 0.62 && ny > -0.95 && ny < 0.8) {
+          const belly = 1 - Math.abs(lateral - 0.3) * 1.6;
+          nz += (Math.cos(ny * 6.4) * 0.018 + 0.028) * front * Math.max(0, belly);
+        }
+
+        // Arco costal.
+        if (ny > 0.5 && ny < 1.15) {
+          const rib = (ny - 0.5) / 0.65;
+          nz += Math.sin(rib * Math.PI) * (0.02 + lateral * 0.03) * front;
+        }
+
+        // Ombligo.
+        const navel = Math.hypot(x, ny + 0.18);
+        if (navel < 0.16) {
+          nz -= Math.exp(-navel * 16) * 0.09 * front;
+        }
+
+        // Micro-relieve cutaneo: rompe cualquier lectura de superficie perfecta.
+        const skinDetail = tissueNoise(x * 2.2, ny * 2.2, z * 2.2) * 0.004;
+
+        positions[i] = nx + skinDetail * 0.3;
+        positions[i + 1] = ny;
+        positions[i + 2] = nz + skinDetail;
+      }
+
+      torso.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
+      torso.createNormals(true);
+    }
+
+    // Textura de piel dibujada por codigo (eritema incluido).
+    const skinTexture = new BABYLON.DynamicTexture(
+      'skin',
+      { width: 1024, height: 1024 },
+      scene,
+      true
+    );
+
+    const torsoMaterial = new BABYLON.PBRMaterial('skinMat', scene);
+    torsoMaterial.albedoTexture = skinTexture;
+    torsoMaterial.metallic = 0;
+    torsoMaterial.roughness = 0.62;
+    torsoMaterial.subSurface.isTranslucencyEnabled = true;
+    torsoMaterial.subSurface.translucencyIntensity = 0.22;
+    torsoMaterial.subSurface.tintColor = BABYLON.Color3.FromHexString('#C97B7B');
+    torsoMaterial.backFaceCulling = false;
+    torso.material = torsoMaterial;
+
+    // D. Punto exacto de aplicacion: se obtiene por raycast sobre la piel real,
+    // asi el parche y el corte quedan pegados a la superficie esculpida.
+    torso.computeWorldMatrix(true);
+    torso.refreshBoundingInfo();
+
+    const rayOrigin = new BABYLON.Vector3(0.34, -0.08, 3);
+    const ray = new BABYLON.Ray(rayOrigin, new BABYLON.Vector3(0, 0, -1), 6);
+    const pick = scene.pickWithRay(ray, (m) => m === torso);
+
+    // Coordenadas UV reales del punto de aplicacion: el eritema se pinta
+    // exactamente donde esta el parche, sin adivinar el mapeo de la esfera.
+    const pickedUv = pick?.hit ? pick.getTextureCoordinates() : null;
+    const patchUv = pickedUv ? { u: pickedUv.x, v: pickedUv.y } : { u: 0.25, v: 0.5 };
+
+    const patchPoint =
+      pick?.hit && pick.pickedPoint
+        ? pick.pickedPoint.clone()
+        : new BABYLON.Vector3(0.34, -0.08, 0.55);
+    const patchNormal =
+      pick?.hit && pick.getNormal(true)
+        ? pick.getNormal(true)!.clone()
+        : new BABYLON.Vector3(0, 0, 1);
+    patchNormal.normalize();
+
+    // E. Parche clinico y menisco de vehiculo, orientados a la piel.
+    const orientToSkin = (mesh: BABYLON.Mesh, offset: number) => {
+      mesh.position = patchPoint.add(patchNormal.scale(offset));
+      mesh.lookAt(mesh.position.add(patchNormal));
     };
 
-    let macroDistance = computeMacroDistance(width / height);
-    camera.position.set(0, macroLookAt.y, macroDistance);
-    camera.lookAt(macroLookAt);
-
-    // C. Renderer WebGL
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true,
-      powerPreference: 'high-performance',
-    });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
-    container.appendChild(renderer.domElement);
-
-    // D. Orbita. El dolly nativo queda desactivado: el acercamiento lo gobierna
-    // el zoom cinematico amortiguado del loop de render.
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.035;
-    controls.rotateSpeed = 0.5;
-    controls.enableZoom = false;
-    controls.enablePan = false;
-    controls.target.copy(macroLookAt);
-
-    // E. Iluminacion anatomica
-    scene.add(new THREE.AmbientLight(0x1b1f26, 1.5));
-
-    const mainDirLight = new THREE.DirectionalLight(0xfff5ea, 2.3);
-    mainDirLight.position.set(3.5, 4.5, 4.5);
-    scene.add(mainDirLight);
-
-    const rimLight = new THREE.DirectionalLight(0x22d3ee, 1.2);
-    rimLight.position.set(-4.0, 1.5, 2.5);
-    scene.add(rimLight);
-
-    const burnLight = new THREE.PointLight(0xef4444, 0, 3.5);
-    burnLight.position.set(PATCH_X, PATCH_Y, 0.45);
-    scene.add(burnLight);
-
-    // F. Malla del torso / abdomen
-    const torsoGeom = new THREE.PlaneGeometry(TORSO_WIDTH, TORSO_HEIGHT, 90, 90);
-    const posAttr = torsoGeom.attributes.position;
-
-    for (let i = 0; i < posAttr.count; i++) {
-      const x = posAttr.getX(i);
-      const y = posAttr.getY(i);
-
-      let z = Math.cos((x / 2.0) * (Math.PI * 0.48)) * 0.92 - Math.abs(x) * 0.14;
-
-      if (y > 0.8 && y < 2.4) {
-        const ribY = (y - 0.8) / 1.6;
-        z += Math.sin(ribY * Math.PI) * (0.07 + Math.abs(x) * 0.05);
-      }
-
-      const distMedial = Math.abs(x);
-      z -= Math.exp(-distMedial * 8.0) * 0.06;
-
-      if (distMedial > 0.15 && distMedial < 0.9 && y > -1.8 && y < 1.6) {
-        const rectusWave = Math.cos(y * 2.8) * 0.035 + 0.04;
-        z += rectusWave * (1.0 - Math.abs(distMedial - 0.5) * 1.8);
-      }
-
-      const distNavel = Math.hypot(x - 0.0, y - -0.55);
-      if (distNavel < 0.35) {
-        z -= Math.exp(-distNavel * 12.0) * 0.28;
-      }
-
-      posAttr.setZ(i, z);
-    }
-    torsoGeom.computeVertexNormals();
-
-    const skinCanvas = document.createElement('canvas');
-    skinCanvas.width = 1024;
-    skinCanvas.height = 1024;
-    const skinTexture = new THREE.CanvasTexture(skinCanvas);
-    skinTexture.wrapS = THREE.ClampToEdgeWrapping;
-    skinTexture.wrapT = THREE.ClampToEdgeWrapping;
-    skinTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-
-    const torsoMat = new THREE.MeshStandardMaterial({
-      map: skinTexture,
-      roughness: 0.58,
-      metalness: 0.04,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 1,
-    });
-
-    const torsoMesh = new THREE.Mesh(torsoGeom, torsoMat);
-    torsoMesh.scale.setScalar(TORSO_SCALE);
-    scene.add(torsoMesh);
-
-    // G. Parche clinico y menisco de vehiculo
-    const patchRingGeom = new THREE.RingGeometry(0.15, 0.18, 48);
-    const patchRingMat = new THREE.MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.85,
-      side: THREE.DoubleSide,
-    });
-    const patchRingMesh = new THREE.Mesh(patchRingGeom, patchRingMat);
-    patchRingMesh.position.set(PATCH_X, PATCH_Y, PATCH_Z);
-    scene.add(patchRingMesh);
-
-    const dropletGeom = new THREE.CircleGeometry(0.15, 48);
-    const dropletMat = new THREE.MeshStandardMaterial({
-      color: 0x22d3ee,
-      roughness: 0.1,
-      metalness: 0.1,
-      transparent: true,
-      opacity: 0.35,
-      side: THREE.DoubleSide,
-    });
-    const dropletMesh = new THREE.Mesh(dropletGeom, dropletMat);
-    dropletMesh.position.set(PATCH_X, PATCH_Y, PATCH_Z - 0.001);
-    scene.add(dropletMesh);
-
-    // H. Corte histologico capa por capa
-    const biopsyGroup = new THREE.Group();
-    biopsyGroup.position.set(PATCH_X, PATCH_Y, 0.22);
-    biopsyGroup.visible = false;
-    scene.add(biopsyGroup);
-
-    const cellLayers: CellLayer[] = [];
-
-    LAYER_DEFS.forEach((ld) => {
-      const boxGeom = new THREE.BoxGeometry(0.44, ld.h, 0.38);
-      const boxMat = new THREE.MeshStandardMaterial({
-        color: ld.color,
-        roughness: ld.rough,
-        metalness: 0.05,
-        transparent: true,
-        opacity: 0,
-      });
-      const layerMesh = new THREE.Mesh(boxGeom, boxMat);
-      layerMesh.position.set(0, ld.y, 0);
-      layerMesh.visible = false;
-      biopsyGroup.add(layerMesh);
-      cellLayers.push({
-        mesh: layerMesh,
-        material: boxMat,
-        baseY: ld.y,
-        baseColor: ld.color,
-        revealAt: ld.revealAt,
-      });
-    });
-
-    const edgeBoxGeom = new THREE.BoxGeometry(0.445, 0.5, 0.385);
-    const edgeHelper = new THREE.LineSegments(
-      new THREE.EdgesGeometry(edgeBoxGeom),
-      new THREE.LineBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0 })
+    const patchDisc = BABYLON.MeshBuilder.CreateDisc(
+      'patch',
+      { radius: 0.085, tessellation: 96 },
+      scene
     );
-    edgeHelper.position.set(0, -0.04, 0);
-    biopsyGroup.add(edgeHelper);
+    const patchMat = new BABYLON.StandardMaterial('patchMat', scene);
+    patchMat.emissiveColor = ACCENT;
+    patchMat.disableLighting = true;
+    patchMat.alpha = 0.25;
+    patchMat.backFaceCulling = false;
+    patchDisc.material = patchMat;
+    orientToSkin(patchDisc, 0.004);
 
-    // Frente de difusion: lamina que desciende a la profundidad calculada por el motor.
-    const frontGeom = new THREE.BoxGeometry(0.46, 0.006, 0.4);
-    const frontMat = new THREE.MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0,
+    const dropletMesh = BABYLON.MeshBuilder.CreateSphere(
+      'droplet',
+      { diameterX: 0.16, diameterY: 0.16, diameterZ: 0.05, segments: 48 },
+      scene
+    );
+    const dropletMat = new BABYLON.PBRMaterial('dropletMat', scene);
+    dropletMat.albedoColor = ACCENT;
+    dropletMat.metallic = 0;
+    dropletMat.roughness = 0.08;
+    dropletMat.alpha = 0.35;
+    dropletMesh.material = dropletMat;
+    orientToSkin(dropletMesh, 0.012);
+
+    // Anillo de incision que se dilata al abrir la piel.
+    const incisionRing = BABYLON.MeshBuilder.CreateTorus(
+      'incision',
+      { diameter: 0.24, thickness: 0.008, tessellation: 96 },
+      scene
+    );
+    const incisionMat = new BABYLON.StandardMaterial('incisionMat', scene);
+    incisionMat.emissiveColor = ACCENT;
+    incisionMat.disableLighting = true;
+    incisionMat.alpha = 0;
+    incisionRing.material = incisionMat;
+    incisionRing.position = patchPoint.add(patchNormal.scale(0.006));
+    incisionRing.lookAt(incisionRing.position.add(patchNormal));
+    incisionRing.rotate(BABYLON.Axis.X, Math.PI / 2, BABYLON.Space.LOCAL);
+
+    // F. Corte histologico: cilindros de alta teselacion con relieve organico,
+    // apilados a lo largo de la normal de la piel (hacia el interior del cuerpo).
+    const biopsyRoot = new BABYLON.TransformNode('biopsy', scene);
+    biopsyRoot.position = patchPoint.clone();
+    const lookHelper = BABYLON.MeshBuilder.CreateBox('helper', { size: 0.001 }, scene);
+    lookHelper.position = patchPoint.clone();
+    lookHelper.lookAt(patchPoint.add(patchNormal));
+    biopsyRoot.rotationQuaternion = lookHelper.rotationQuaternion
+      ? lookHelper.rotationQuaternion.clone()
+      : BABYLON.Quaternion.FromEulerVector(lookHelper.rotation);
+    lookHelper.dispose();
+
+    const sceneLayers: SceneLayer[] = LAYER_DEFS.map((def, idx) => {
+      const mesh = BABYLON.MeshBuilder.CreateCylinder(
+        `layer-${def.key}`,
+        {
+          diameter: 0.24,
+          height: def.thickness,
+          tessellation: 96,
+          subdivisions: 6,
+        },
+        scene
+      );
+
+      // Relieve de la interfase: papilas dermicas y borde de tejido irregular,
+      // para que ninguna capa se lea como un bloque recto.
+      const layerPositions = mesh.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+      if (layerPositions) {
+        for (let i = 0; i < layerPositions.length; i += 3) {
+          const x = layerPositions[i];
+          const y = layerPositions[i + 1];
+          const z = layerPositions[i + 2];
+          const radial = Math.hypot(x, z);
+          const amplitude = idx === 1 || idx === 2 ? 0.0055 : 0.0035;
+          const wave = tissueNoise(x * 6, y * 30, z * 6) * amplitude;
+          const rim = radial > 0.001 ? 1 : 0;
+
+          layerPositions[i] = x + (x / (radial || 1)) * wave * rim;
+          layerPositions[i + 1] = y + wave * 0.6;
+          layerPositions[i + 2] = z + (z / (radial || 1)) * wave * rim;
+        }
+        mesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, layerPositions);
+        mesh.createNormals(true);
+      }
+
+      const material = new BABYLON.PBRMaterial(`layerMat-${def.key}`, scene);
+      const baseColor = BABYLON.Color3.FromHexString(def.color);
+      material.albedoColor = baseColor;
+      material.metallic = 0;
+      material.roughness = 0.55 + idx * 0.06;
+      material.subSurface.isTranslucencyEnabled = true;
+      material.subSurface.translucencyIntensity = 0.3;
+      material.alpha = 0;
+      mesh.material = material;
+
+      mesh.parent = biopsyRoot;
+      // El cilindro crece en Y; se tumba para apilarse a lo largo de la normal.
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position = new BABYLON.Vector3(0, 0, -(def.depth + def.thickness / 2));
+      mesh.isVisible = false;
+
+      return { mesh, material, baseColor, depth: def.depth, revealAt: def.revealAt };
     });
-    const frontMesh = new THREE.Mesh(frontGeom, frontMat);
-    frontMesh.position.set(0, STACK_TOP_Y, 0);
-    biopsyGroup.add(frontMesh);
 
-    // Particulas del activo penetrando capa por capa
-    const particleCount = 140;
-    const particleGeom = new THREE.BufferGeometry();
-    const particlePositions = new Float32Array(particleCount * 3);
+    // Frente de difusion: disco luminoso que desciende a la profundidad del motor.
+    const frontDisc = BABYLON.MeshBuilder.CreateDisc(
+      'front',
+      { radius: 0.125, tessellation: 96 },
+      scene
+    );
+    const frontMat = new BABYLON.StandardMaterial('frontMat', scene);
+    frontMat.emissiveColor = ACCENT;
+    frontMat.disableLighting = true;
+    frontMat.alpha = 0;
+    frontMat.backFaceCulling = false;
+    frontDisc.material = frontMat;
+    frontDisc.parent = biopsyRoot;
+    frontDisc.position = new BABYLON.Vector3(0, 0, -STACK_TOP);
 
-    for (let p = 0; p < particleCount; p++) {
-      particlePositions[p * 3] = (Math.random() - 0.5) * 0.38;
-      particlePositions[p * 3 + 1] = STACK_TOP_Y - Math.random() * 0.1;
-      particlePositions[p * 3 + 2] = (Math.random() - 0.5) * 0.32;
-    }
-    particleGeom.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+    // G. Particulas del activo penetrando el tejido.
+    const particleTexture = new BABYLON.DynamicTexture(
+      'particleTex',
+      { width: 64, height: 64 },
+      scene,
+      true
+    );
+    const pCtx = particleTexture.getContext() as unknown as CanvasRenderingContext2D;
+    const pGrad = pCtx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    pGrad.addColorStop(0, 'rgba(255,255,255,1)');
+    pGrad.addColorStop(0.4, 'rgba(255,255,255,0.5)');
+    pGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    pCtx.fillStyle = pGrad;
+    pCtx.fillRect(0, 0, 64, 64);
+    particleTexture.update();
+    particleTexture.hasAlpha = true;
 
-    const particleMat = new THREE.PointsMaterial({
-      color: 0x22d3ee,
-      size: 0.016,
-      transparent: true,
-      opacity: 0,
-    });
-    const particleSystem = new THREE.Points(particleGeom, particleMat);
-    biopsyGroup.add(particleSystem);
+    // Emisor invisible anclado al corte: mantiene la orientacion de la piel.
+    const particleEmitter = BABYLON.MeshBuilder.CreateBox(
+      'particleEmitter',
+      { size: 0.001 },
+      scene
+    );
+    particleEmitter.parent = biopsyRoot;
+    particleEmitter.isVisible = false;
+    particleEmitter.isPickable = false;
 
-    // Abertura de la incision sobre la piel
-    const cutawayGeom = new THREE.RingGeometry(0.22, 0.3, 48);
-    const cutawayMat = new THREE.MeshBasicMaterial({
-      color: 0x22d3ee,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0,
-    });
-    const cutawayOpeningMesh = new THREE.Mesh(cutawayGeom, cutawayMat);
-    cutawayOpeningMesh.position.set(PATCH_X, PATCH_Y, PATCH_Z - 0.005);
-    scene.add(cutawayOpeningMesh);
+    const particles = new BABYLON.ParticleSystem('molecules', 900, scene);
+    particles.particleTexture = particleTexture;
+    particles.emitter = particleEmitter;
+    particles.minEmitBox = new BABYLON.Vector3(-0.1, -0.1, 0.005);
+    particles.maxEmitBox = new BABYLON.Vector3(0.1, 0.1, 0.005);
+    particles.color1 = new BABYLON.Color4(ACCENT.r, ACCENT.g, ACCENT.b, 0.85);
+    particles.color2 = new BABYLON.Color4(ACCENT.r, ACCENT.g, ACCENT.b, 0.35);
+    particles.colorDead = new BABYLON.Color4(0, 0, 0, 0);
+    particles.minSize = 0.004;
+    particles.maxSize = 0.011;
+    particles.minLifeTime = 1.4;
+    particles.maxLifeTime = 3.2;
+    particles.emitRate = 0;
+    particles.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
+    particles.direction1 = new BABYLON.Vector3(-0.01, -0.01, -0.06);
+    particles.direction2 = new BABYLON.Vector3(0.01, 0.01, -0.02);
+    particles.minEmitPower = 0.01;
+    particles.maxEmitPower = 0.045;
+    particles.updateSpeed = 0.012;
+    particles.isLocal = true;
+    particles.start();
 
-    threeStateRef.current = {
+    burnLight.position = patchPoint.add(patchNormal.scale(0.25));
+
+    const microTarget = patchPoint.subtract(patchNormal.scale(0.07));
+
+    sceneRef.current = {
+      engine,
       scene,
       camera,
-      renderer,
-      controls,
-      torsoMesh,
-      torsoMaterial: torsoMat,
-      skinTextureCanvas: skinCanvas,
+      torso,
+      torsoMaterial,
       skinTexture,
-      patchRingMesh,
+      patchDisc,
       dropletMesh,
-      biopsyGroup,
-      cutawayOpeningMesh,
-      edgeHelper,
-      frontMesh,
+      incisionRing,
+      biopsyRoot,
+      layers: sceneLayers,
+      frontDisc,
+      particles,
+      glow,
       burnLight,
-      particleSystem,
-      cellLayers,
-      macroDistance,
-      animFrameId: 0,
+      macroTarget,
+      microTarget,
+      macroRadius,
+      patchNormal,
+      patchUv,
     };
 
-    // I. Loop de render: zoom cinematico, apertura del corte y reaccion quimica
-    const macroLook = macroLookAt.clone();
-    const microLook = new THREE.Vector3(PATCH_X, PATCH_Y, 0.16);
-    const desiredLook = new THREE.Vector3();
-    const offset = new THREE.Vector3();
-    const chemColor = new THREE.Color();
-    const inflamedColor = new THREE.Color(0xef4444);
-    const severeColor = new THREE.Color(0xdc2626);
-    const baseColor = new THREE.Color();
+    // H. Bucle de render: zoom cinematico, apertura del corte y reaccion quimica.
+    // Angulos que enfrentan la camara al parche cuando entramos en vista celular.
+    const microAlpha = Math.atan2(patchNormal.z, patchNormal.x);
+    const microBeta = Math.acos(clamp01(patchNormal.y * 0.5 + 0.5));
 
-    let timeClock = 0;
+    const workColor = new BABYLON.Color3();
+    let clock = 0;
 
-    const animate = () => {
-      const state = threeStateRef.current;
-      if (!state) return;
+    scene.registerBeforeRender(() => {
+      const refs = sceneRef.current;
+      if (!refs) return;
 
-      timeClock += 0.02;
+      const dt = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.1);
+      clock += dt;
 
-      // Persecucion lenta del objetivo de zoom (interpolacion amortiguada).
-      zoomRenderRef.current += (zoomTargetRef.current - zoomRenderRef.current) * 0.035;
+      // Persecucion amortiguada del objetivo de zoom.
+      zoomRenderRef.current += (zoomTargetRef.current - zoomRenderRef.current) * (1 - Math.pow(0.02, dt));
       const eased = smoothstep(zoomRenderRef.current);
       const reaction = reactionRef.current;
 
-      // Encuadre: la mirada viaja del abdomen al parche y la distancia se cierra.
-      desiredLook.lerpVectors(macroLook, microLook, eased);
-      state.controls.target.lerp(desiredLook, 0.06);
-
-      const desiredDistance = THREE.MathUtils.lerp(state.macroDistance, MICRO_DISTANCE, eased);
-      offset.copy(state.camera.position).sub(state.controls.target);
-      const currentDistance = Math.max(offset.length(), 0.0001);
-      offset.setLength(THREE.MathUtils.lerp(currentDistance, desiredDistance, 0.06));
-      state.camera.position.copy(state.controls.target).add(offset);
-
-      state.controls.update();
-
-      // La piel exterior se abre a medida que la camara se acerca.
-      const skinFade = smoothstep((eased - 0.22) / 0.5);
-      state.torsoMaterial.opacity = THREE.MathUtils.lerp(1, 0.06, skinFade);
-      state.torsoMesh.visible = state.torsoMaterial.opacity > 0.02;
-
-      const ringPulse = 1.0 + Math.sin(timeClock * 3.0) * 0.05;
-      state.patchRingMesh.scale.set(ringPulse, ringPulse, 1.0);
-      (state.patchRingMesh.material as THREE.MeshBasicMaterial).opacity = Math.max(
-        0,
-        0.85 - skinFade * 0.85
+      // Encuadre: el objetivo viaja del abdomen al parche y el radio se cierra.
+      const desiredTarget = BABYLON.Vector3.Lerp(refs.macroTarget, refs.microTarget, eased);
+      refs.camera.target = BABYLON.Vector3.Lerp(refs.camera.target, desiredTarget, 0.08);
+      refs.camera.radius = lerp(
+        refs.camera.radius,
+        lerp(refs.macroRadius, MICRO_DISTANCE, eased),
+        0.08
       );
-      // El menisco de vehiculo se consume conforme el activo penetra.
-      (state.dropletMesh.material as THREE.MeshStandardMaterial).opacity =
-        Math.max(0, 0.4 * reaction.surfaceLoad) * (1 - skinFade);
-      const dropScale = 0.75 + reaction.surfaceLoad * 0.25;
-      state.dropletMesh.scale.set(dropScale, dropScale, 1);
 
-      // Incision: el anillo de corte se dilata mientras la piel se secciona.
-      const cutaway = smoothstep((eased - 0.18) / 0.3);
-      const cutawayMaterial = state.cutawayOpeningMesh.material as THREE.MeshBasicMaterial;
-      cutawayMaterial.opacity = cutaway * (1 - skinFade) * 0.9;
-      state.cutawayOpeningMesh.scale.setScalar(0.7 + cutaway * 1.1);
-      state.cutawayOpeningMesh.visible = cutawayMaterial.opacity > 0.01;
+      // Al acercarse, la camara se alinea sola con la normal de la piel, salvo
+      // que el usuario este orbitando manualmente.
+      if (!isDraggingRef.current && eased > 0.05) {
+        refs.camera.alpha = lerp(refs.camera.alpha, microAlpha, 0.03 * eased);
+        refs.camera.beta = lerp(refs.camera.beta, microBeta, 0.03 * eased);
+      }
 
-      // Apertura escalonada: Estrato Corneo, Epidermis Viable, Dermis, Hipodermis.
-      state.biopsyGroup.visible = eased > 0.02;
-      state.biopsyGroup.scale.setScalar(0.55 + eased * 0.45);
+      // Respiracion sutil del cuerpo: nada queda completamente estatico.
+      const breathe = 1 + Math.sin(clock * 0.9) * 0.006 * (1 - eased);
+      refs.torso.scaling.set(breathe, 1 + Math.sin(clock * 0.9) * 0.003 * (1 - eased), breathe);
 
-      const breath = 0.5 + Math.sin(timeClock * 2.4) * 0.5;
+      // La piel se abre conforme la camara entra.
+      const skinFade = smoothstep((eased - 0.22) / 0.5);
+      refs.torsoMaterial.alpha = lerp(1, 0.05, skinFade);
+      refs.torsoMaterial.transparencyMode = skinFade > 0.01 ? BABYLON.PBRMaterial.MATERIAL_ALPHABLEND : BABYLON.PBRMaterial.MATERIAL_OPAQUE;
 
-      state.cellLayers.forEach((layer, idx) => {
+      const pulse = 0.5 + Math.sin(clock * 3) * 0.5;
+      (refs.patchDisc.material as BABYLON.StandardMaterial).alpha =
+        (0.18 + pulse * 0.14) * (1 - skinFade);
+      refs.patchDisc.scaling.setAll(1 + pulse * 0.05);
+
+      const dropletMaterial = refs.dropletMesh.material as BABYLON.PBRMaterial;
+      dropletMaterial.alpha = 0.42 * reaction.surfaceLoad * (1 - skinFade);
+      const dropScale = 0.7 + reaction.surfaceLoad * 0.3;
+      refs.dropletMesh.scaling.set(dropScale, dropScale, dropScale);
+
+      const incision = smoothstep((eased - 0.18) / 0.3);
+      const incisionMaterial = refs.incisionRing.material as BABYLON.StandardMaterial;
+      incisionMaterial.alpha = incision * (1 - skinFade) * 0.85;
+      refs.incisionRing.scaling.setAll(0.7 + incision * 1.2);
+
+      // Apertura escalonada de las capas + reaccion quimica en cada una.
+      const breath = 0.5 + Math.sin(clock * 2.4) * 0.5;
+
+      refs.layers.forEach((layer, idx) => {
         const reveal = layerReveal(eased, layer.revealAt);
-        layer.material.opacity = reveal;
-        layer.mesh.visible = reveal > 0.01;
+        layer.material.alpha = reveal;
+        layer.mesh.isVisible = reveal > 0.01;
         // Cada capa desciende a su posicion anatomica al seccionarse.
-        layer.mesh.position.y = layer.baseY + (1 - reveal) * 0.09;
-        layer.mesh.scale.set(0.9 + reveal * 0.1, 1, 0.9 + reveal * 0.1);
+        layer.mesh.position.z =
+          -(layer.depth + LAYER_DEFS[idx].thickness / 2) + (1 - reveal) * 0.05;
+        layer.mesh.scaling.set(0.9 + reveal * 0.1, 1, 0.9 + reveal * 0.1);
 
-        // Reaccion quimica: la capa se tine segun la carga de activo que
-        // el motor reporta en ella, y enrojece si hay respuesta inflamatoria.
         const load = reaction.layerLoad[idx] ?? 0;
-        const inflame = idx === 1 || idx === 2 ? reaction.inflammation : reaction.inflammation * 0.35;
+        const inflame =
+          idx === 1 || idx === 2 ? reaction.inflammation : reaction.inflammation * 0.35;
 
-        baseColor.setHex(layer.baseColor);
-        chemColor.copy(baseColor).lerp(new THREE.Color(0x1d6e8e), load * 0.55);
-        chemColor.lerp(reaction.severe ? severeColor : inflamedColor, inflame);
-        layer.material.color.copy(chemColor);
-
-        layer.material.emissive.setHex(
-          inflame > 0.05 ? (reaction.severe ? 0x7f1d1d : 0x450a0a) : 0x0b3a45
+        // Tincion: el activo azulea el tejido; la inflamacion lo enrojece.
+        BABYLON.Color3.LerpToRef(layer.baseColor, CHEMICAL_TINT, load * 0.5, workColor);
+        BABYLON.Color3.LerpToRef(
+          workColor,
+          reaction.severe ? SEVERE : INFLAMED,
+          inflame,
+          workColor
         );
-        layer.material.emissiveIntensity =
-          load * 0.18 + inflame * (0.3 + breath * 0.25);
+        layer.material.albedoColor.copyFrom(workColor);
+
+        const emissive = load * 0.12 + inflame * (0.35 + breath * 0.3);
+        layer.material.emissiveColor.copyFromFloats(
+          (inflame > 0.05 ? (reaction.severe ? 0.86 : 0.94) : 0.13) * emissive,
+          (inflame > 0.05 ? 0.15 : 0.83) * emissive,
+          (inflame > 0.05 ? 0.15 : 0.93) * emissive
+        );
       });
 
-      (state.edgeHelper.material as THREE.LineBasicMaterial).opacity =
-        smoothstep((eased - 0.26) / 0.25) * 0.4;
+      // Frente de difusion a la profundidad exacta que reporta el motor.
+      const frontZ = -lerp(STACK_TOP, STACK_BOTTOM, reaction.frontDepth);
+      refs.frontDisc.position.z += (frontZ - refs.frontDisc.position.z) * 0.06;
+      const frontMaterial = refs.frontDisc.material as BABYLON.StandardMaterial;
+      frontMaterial.alpha = smoothstep((eased - 0.3) / 0.25) * (0.25 + breath * 0.35);
+      frontMaterial.emissiveColor = reaction.inflammation > 0.4 ? INFLAMED : ACCENT;
+      refs.frontDisc.scaling.setAll(0.85 + breath * 0.06);
 
-      // Frente de difusion: profundidad exacta reportada por el motor.
-      const frontY = THREE.MathUtils.lerp(STACK_TOP_Y, STACK_BOTTOM_Y, reaction.frontDepth);
-      state.frontMesh.position.y += (frontY - state.frontMesh.position.y) * 0.08;
-      const frontMaterial = state.frontMesh.material as THREE.MeshBasicMaterial;
-      frontMaterial.opacity = smoothstep((eased - 0.3) / 0.25) * (0.35 + breath * 0.35);
-      frontMaterial.color.setHex(reaction.inflammation > 0.4 ? 0xef4444 : 0x22d3ee);
-      state.frontMesh.visible = frontMaterial.opacity > 0.02;
+      // Particulas: caudal y velocidad proporcionales al avance del activo.
+      refs.particles.emitRate = eased > 0.28 ? 40 + reaction.frontDepth * 260 : 0;
+      refs.particles.maxEmitPower = 0.02 + reaction.frontDepth * 0.08;
+      const particleColor = reaction.inflammation > 0.4 ? INFLAMED : ACCENT;
+      refs.particles.color1 = new BABYLON.Color4(
+        particleColor.r,
+        particleColor.g,
+        particleColor.b,
+        0.85
+      );
+      refs.particles.color2 = new BABYLON.Color4(
+        particleColor.r,
+        particleColor.g,
+        particleColor.b,
+        0.3
+      );
 
-      // Particulas: velocidad proporcional a la carga y acumulacion en el frente.
-      const particleMaterial = state.particleSystem.material as THREE.PointsMaterial;
-      particleMaterial.opacity = smoothstep((eased - 0.34) / 0.25) * (0.45 + reaction.surfaceLoad * 0.45);
-      particleMaterial.color.setHex(reaction.inflammation > 0.4 ? 0xf87171 : 0x22d3ee);
+      refs.glow.intensity = 0.28 + reaction.inflammation * 0.5 + eased * 0.15;
+      refs.burnLight.intensity = reaction.inflammation * (reaction.severe ? 3.2 : 1.6);
+      refs.burnLight.diffuse = reaction.severe ? SEVERE : INFLAMED;
+    });
 
-      const descentSpeed = 0.0008 + reaction.frontDepth * 0.0032;
-      const pPos = state.particleSystem.geometry.attributes.position as THREE.BufferAttribute;
-      for (let i = 0; i < particleCount; i++) {
-        let y = pPos.getY(i) - descentSpeed;
-        if (y < frontY) y = STACK_TOP_Y;
-        pPos.setY(i, y);
-      }
-      pPos.needsUpdate = true;
+    engine.runRenderLoop(() => {
+      scene.render();
+    });
 
-      state.renderer.render(state.scene, state.camera);
-      state.animFrameId = requestAnimationFrame(animate);
-    };
+    // I. Reencuadre ante cualquier cambio de tamano (incluida pantalla completa).
+    const handleResize = () => engine.resize();
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(canvas);
+    window.addEventListener('resize', handleResize);
 
-    animate();
-
-    // J. Reencuadre ante cualquier cambio de tamano del contenedor,
-    // incluidas la entrada y la salida de pantalla completa.
-    const applySize = () => {
-      const state = threeStateRef.current;
-      if (!state || !container) return;
-      const w = container.clientWidth || 800;
-      const h = container.clientHeight || 600;
-      state.camera.aspect = w / h;
-      state.camera.updateProjectionMatrix();
-      state.renderer.setSize(w, h);
-      macroDistance = computeMacroDistance(w / h);
-      state.macroDistance = macroDistance;
-    };
-
-    const resizeObserver = new ResizeObserver(applySize);
-    resizeObserver.observe(container);
-    window.addEventListener('resize', applySize);
-
-    // K. Zoom cinematico con la rueda: incremento pequeno y normalizado.
+    // J. Zoom cinematico con la rueda, y deteccion de orbita manual.
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       const normalized = Math.max(-1, Math.min(1, e.deltaY / 100));
       setZoomLevel((prev) => prev - normalized * 0.04);
     };
-    container.addEventListener('wheel', handleWheel, { passive: false });
+    const handlePointerDown = () => {
+      isDraggingRef.current = true;
+    };
+    const handlePointerUp = () => {
+      isDraggingRef.current = false;
+    };
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('pointerup', handlePointerUp);
 
     return () => {
       resizeObserver.disconnect();
-      window.removeEventListener('resize', applySize);
-      container.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('resize', handleResize);
+      canvas.removeEventListener('wheel', handleWheel);
+      canvas.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('pointerup', handlePointerUp);
 
-      const state = threeStateRef.current;
-      if (state) {
-        cancelAnimationFrame(state.animFrameId);
-        state.cellLayers.forEach((l) => {
-          l.mesh.geometry.dispose();
-          l.material.dispose();
-        });
-        state.edgeHelper.geometry.dispose();
-        (state.edgeHelper.material as THREE.Material).dispose();
-        frontGeom.dispose();
-        frontMat.dispose();
-        particleGeom.dispose();
-        particleMat.dispose();
-        patchRingGeom.dispose();
-        patchRingMat.dispose();
-        dropletGeom.dispose();
-        dropletMat.dispose();
-        cutawayGeom.dispose();
-        cutawayMat.dispose();
-        edgeBoxGeom.dispose();
-        controls.dispose();
-        renderer.dispose();
-        torsoGeom.dispose();
-        torsoMat.dispose();
-        skinTexture.dispose();
-        threeStateRef.current = null;
-      }
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
-      }
+      sceneRef.current = null;
+      particles.dispose();
+      particleTexture.dispose();
+      skinTexture.dispose();
+      scene.dispose();
+      engine.dispose();
     };
   }, [setZoomLevel]);
 
@@ -628,10 +740,9 @@ export const SkinDigitalTwin: React.FC = () => {
 
     const surfaceLoad = clamp01(currentFrame.vehicleConcentration / maxVehicleConcentration);
 
-    // Inflamacion: solo aparece una vez superado el lag time, escalada por el
-    // indice heuristico de irritacion que reporta el motor.
     const lagTime = metrics?.lagTimeHours ?? 2;
-    const afterLag = currentFrame.timeHours >= Math.min(lagTime, frames[frames.length - 1].timeHours);
+    const afterLag =
+      currentFrame.timeHours >= Math.min(lagTime, frames[frames.length - 1].timeHours);
     const inflammation = isErythema && afterLag ? clamp01((irritationIndex - 40) / 45) : 0;
 
     reactionRef.current = {
@@ -652,56 +763,59 @@ export const SkinDigitalTwin: React.FC = () => {
     irritationIndex,
   ]);
 
-  // 3. Eritema pintado sobre la textura de la piel del abdomen
+  // 3. Eritema pintado sobre la textura de piel del abdomen
   useEffect(() => {
-    if (!threeStateRef.current || !result || !currentFrame) return;
+    const refs = sceneRef.current;
+    if (!refs || !result || !currentFrame) return;
 
-    const { skinTextureCanvas, skinTexture, burnLight } = threeStateRef.current;
+    const ctx = refs.skinTexture.getContext() as unknown as CanvasRenderingContext2D;
+    const w = 1024;
+    const h = 1024;
 
-    const ctx = skinTextureCanvas.getContext('2d');
-    if (!ctx) return;
-
-    const w = skinTextureCanvas.width;
-    const h = skinTextureCanvas.height;
-
-    const skinGrad = ctx.createRadialGradient(w * 0.5, h * 0.55, w * 0.1, w * 0.5, h * 0.5, w * 0.65);
+    const skinGrad = ctx.createRadialGradient(w * 0.5, h * 0.5, w * 0.1, w * 0.5, h * 0.5, w * 0.7);
     skinGrad.addColorStop(0.0, '#D9A98D');
-    skinGrad.addColorStop(0.5, '#CF9D81');
-    skinGrad.addColorStop(1.0, '#B68469');
+    skinGrad.addColorStop(0.55, '#CF9D81');
+    skinGrad.addColorStop(1.0, '#A97A62');
 
     ctx.fillStyle = skinGrad;
     ctx.fillRect(0, 0, w, h);
 
+    // Poro y microtextura cutanea para que la piel no se lea plana.
     ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(w * 0.5, h * 0.62, 12, 18, 0, 0, Math.PI * 2);
-    ctx.fillStyle = '#6E4432';
-    ctx.filter = 'blur(4px)';
-    ctx.fill();
+    ctx.globalAlpha = 0.05;
+    for (let i = 0; i < 2200; i++) {
+      const px = Math.random() * w;
+      const py = Math.random() * h;
+      ctx.fillStyle = i % 2 === 0 ? '#8E5F45' : '#F0C3A6';
+      ctx.beginPath();
+      ctx.arc(px, py, Math.random() * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
 
-    const patchU = w * (0.5 + 0.65 / TORSO_WIDTH);
-    const patchV = h * (0.5 + 0.15 / TORSO_HEIGHT);
+    // UV exactas del parche, obtenidas por raycast sobre la malla esculpida.
+    const patchU = w * refs.patchUv.u;
+    const patchV = h * (1 - refs.patchUv.v);
 
     const currentTime = currentFrame.timeHours;
     const lagTime = metrics?.lagTimeHours ?? 2.0;
 
     if (isErythema && currentTime >= Math.min(lagTime * 0.4, 1.0)) {
       const timeFactor = Math.min(1.0, currentTime / (lagTime + 3.0));
-      const rashRadius = (isSevereBurn ? 135 : 90) * timeFactor;
+      const rashRadius = (isSevereBurn ? 150 : 105) * timeFactor;
 
       ctx.save();
-      const rashGrad = ctx.createRadialGradient(patchU, patchV, 5, patchU, patchV, rashRadius);
+      const rashGrad = ctx.createRadialGradient(patchU, patchV, 4, patchU, patchV, rashRadius);
 
       if (isSevereBurn) {
         rashGrad.addColorStop(0.0, 'rgba(185, 28, 28, 0.95)');
-        rashGrad.addColorStop(0.4, 'rgba(220, 38, 38, 0.85)');
-        rashGrad.addColorStop(0.7, 'rgba(239, 68, 68, 0.55)');
-        rashGrad.addColorStop(1.0, 'rgba(239, 68, 68, 0.0)');
+        rashGrad.addColorStop(0.4, 'rgba(220, 38, 38, 0.8)');
+        rashGrad.addColorStop(0.72, 'rgba(239, 68, 68, 0.5)');
+        rashGrad.addColorStop(1.0, 'rgba(239, 68, 68, 0)');
       } else {
-        rashGrad.addColorStop(0.0, 'rgba(239, 68, 68, 0.75)');
-        rashGrad.addColorStop(0.5, 'rgba(248, 113, 113, 0.45)');
-        rashGrad.addColorStop(1.0, 'rgba(248, 113, 113, 0.0)');
+        rashGrad.addColorStop(0.0, 'rgba(239, 68, 68, 0.7)');
+        rashGrad.addColorStop(0.5, 'rgba(248, 113, 113, 0.4)');
+        rashGrad.addColorStop(1.0, 'rgba(248, 113, 113, 0)');
       }
 
       ctx.fillStyle = rashGrad;
@@ -709,28 +823,21 @@ export const SkinDigitalTwin: React.FC = () => {
       ctx.arc(patchU, patchV, rashRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
-
-      burnLight.intensity = isSevereBurn ? 2.8 : 1.4;
-      burnLight.color.setHex(isSevereBurn ? 0xdc2626 : 0xef4444);
-    } else {
-      burnLight.intensity = 0;
     }
 
     ctx.save();
     ctx.beginPath();
-    ctx.arc(patchU, patchV, 24, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(34, 211, 238, 0.22)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(34, 211, 238, 0.6)';
-    ctx.lineWidth = 2.5;
+    ctx.arc(patchU, patchV, 26, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(34, 211, 238, 0.55)';
+    ctx.lineWidth = 3;
     ctx.stroke();
     ctx.restore();
 
-    skinTexture.needsUpdate = true;
+    refs.skinTexture.update();
   }, [result, currentFrame, isErythema, isSevereBurn, metrics]);
 
   // 4. Zoom automatico y lento al pulsar Play: la camara viaja sola hasta el
-  // area donde ocurre la reaccion quimica. Se detiene al alcanzar el objetivo.
+  // area donde ocurre la reaccion quimica.
   useEffect(() => {
     if (!isPlaying) return;
     if (useLabStore.getState().zoomLevel >= AUTO_ZOOM_TARGET - 0.01) return;
@@ -764,7 +871,6 @@ export const SkinDigitalTwin: React.FC = () => {
     });
   }, [result]);
 
-  // Salir de pantalla completa con Escape (tambien detiene la voz).
   useEffect(() => {
     if (!isFullscreen) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -777,11 +883,10 @@ export const SkinDigitalTwin: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isFullscreen]);
 
-  // Al desmontar, nunca dejar voz sonando.
   useEffect(() => () => stopSpeech(), []);
 
   const layerHudRows = [
-    { label: '1. Estrato corneo', range: '0 – 15 µm', dot: '#D4AF37', inflamed: false },
+    { label: '1. Estrato córneo', range: '0 – 15 µm', dot: '#D4AF37', inflamed: false },
     { label: '2. Epidermis viable', range: '15 – 100 µm', dot: '#E0A88A', inflamed: isErythema },
     { label: '3. Dermis', range: '100 – 1500 µm', dot: '#C97B7B', inflamed: isErythema },
     { label: '4. Hipodermis', range: '> 1500 µm', dot: '#E8C87E', inflamed: false },
@@ -789,17 +894,17 @@ export const SkinDigitalTwin: React.FC = () => {
 
   return (
     <div
+      ref={shellRef}
       className={`relative overflow-hidden ${
         isFullscreen ? 'fixed inset-0 z-50 h-screen w-screen bg-bg' : 'h-full w-full bg-bg'
       }`}
     >
-      {/* Lienzo WebGL a altura completa: sin barras superiores sobre el visor */}
-      <div
-        ref={mountRef}
-        className="absolute inset-0 cursor-grab overflow-hidden active:cursor-grabbing"
+      {/* Lienzo Babylon a altura completa: sin barras superiores sobre el visor */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 h-full w-full cursor-grab touch-none outline-none active:cursor-grabbing"
       />
 
-      {/* Boton flotante de pantalla completa */}
       <button
         onClick={handleToggleFullscreen}
         className="absolute right-3 top-3 z-20 flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface/80 text-text-muted backdrop-blur-md transition-colors hover:border-accent hover:text-accent"
@@ -813,7 +918,6 @@ export const SkinDigitalTwin: React.FC = () => {
         {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
       </button>
 
-      {/* Estado de tolerancia / irritacion */}
       <div className="pointer-events-none absolute right-14 top-3 z-20">
         {isErythema ? (
           <div
@@ -834,7 +938,6 @@ export const SkinDigitalTwin: React.FC = () => {
         )}
       </div>
 
-      {/* HUD de inspeccion capa por capa */}
       <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[250px] flex-col gap-1.5 rounded-xl border border-border bg-surface/85 p-2.5 shadow-xl backdrop-blur-md">
         <div className="flex items-center justify-between text-[11px] font-semibold text-accent">
           <span>{viewMode === 'macro' ? 'ABDOMEN HUMANO' : 'CORTE CAPA POR CAPA'}</span>
@@ -866,7 +969,9 @@ export const SkinDigitalTwin: React.FC = () => {
                       className="h-1.5 w-1.5 rounded-full"
                       style={{ backgroundColor: inflamedNow ? '#EF4444' : row.dot }}
                     />
-                    <span className={`font-semibold ${inflamedNow ? 'text-risk-high' : 'text-text'}`}>
+                    <span
+                      className={`font-semibold ${inflamedNow ? 'text-risk-high' : 'text-text'}`}
+                    >
                       {row.label}
                     </span>
                   </div>
@@ -878,9 +983,8 @@ export const SkinDigitalTwin: React.FC = () => {
         )}
       </div>
 
-      {/* Aviso de reaccion activa */}
       {isErythema && (
-        <div className="pointer-events-none absolute right-3 top-14 z-10 flex max-w-[240px] items-center gap-2 rounded-xl border border-risk-high/50 bg-surface/90 p-2.5 text-xs text-text shadow-xl backdrop-blur-md">
+        <div className="pointer-events-none absolute right-3 top-14 z-10 flex max-w-[240px] items-center gap-2 rounded-xl border border-risk-high/50 bg-surface/90 p-2.5 text-xs shadow-xl backdrop-blur-md">
           <Flame className="h-4 w-4 shrink-0 text-risk-high" />
           <div className="flex flex-col text-[10px] leading-tight">
             <strong className="font-semibold text-risk-high">
@@ -895,15 +999,12 @@ export const SkinDigitalTwin: React.FC = () => {
         </div>
       )}
 
-      {/* Controles flotantes de camara: nada obstruye la parte superior del visor */}
       <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-border bg-surface/85 px-2 py-1.5 shadow-xl backdrop-blur-md">
         <div className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 p-0.5">
           <button
             onClick={handleGoMacro}
             className={`flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-              viewMode === 'macro'
-                ? 'bg-surface text-text'
-                : 'text-text-muted hover:text-text'
+              viewMode === 'macro' ? 'bg-surface text-text' : 'text-text-muted hover:text-text'
             }`}
             title="Vista del abdomen completo"
           >
@@ -914,9 +1015,7 @@ export const SkinDigitalTwin: React.FC = () => {
           <button
             onClick={handleGoMicro}
             className={`flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-              viewMode === 'micro'
-                ? 'bg-surface text-text'
-                : 'text-text-muted hover:text-text'
+              viewMode === 'micro' ? 'bg-surface text-text' : 'text-text-muted hover:text-text'
             }`}
             title="Corte celular capa por capa"
           >

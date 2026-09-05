@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { SkinDigitalTwin } from '@/components/lab/SkinDigitalTwin';
+import { ViewerErrorBoundary } from '@/components/lab/ViewerErrorBoundary';
 import { TimelineControls } from '@/components/lab/TimelineControls';
 import { ChemicalFilters } from '@/components/lab/ChemicalFilters';
 import { ScientificNarrator } from '@/components/lab/ScientificNarrator';
@@ -26,9 +27,11 @@ export default function LabPage() {
     <div className="flex h-screen w-full overflow-hidden bg-bg text-text selection:bg-accent/20">
       {/* 1. LADO IZQUIERDO: SIMULADOR 3D AMPLIADO HACIA ARRIBA (Sin barras principales) */}
       <main className="relative flex flex-1 h-full flex-col overflow-hidden bg-bg">
-        {/* Visor 3D Three.js del Abdomen y Corte Celular */}
+        {/* Visor 3D Babylon.js del abdomen y del corte celular */}
         <div className="flex flex-1 overflow-hidden">
-          <SkinDigitalTwin />
+          <ViewerErrorBoundary>
+            <SkinDigitalTwin />
+          </ViewerErrorBoundary>
         </div>
 
         {/* Barra de Control de Tiempo en la base del simulador */}
