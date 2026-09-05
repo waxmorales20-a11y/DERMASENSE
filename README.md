@@ -103,7 +103,7 @@ Requisitos: Node.js >= 20, cuenta Supabase, API key de Anthropic.
 
 | Nombre completo | GitHub | Rol |
 |---|---|---|
-| Mauricio Morales | `@` | Tech Lead / Arquitectura y motor de simulación |
+| Max Morales | `@` | Tech Lead / Arquitectura y motor de simulación |
 | _(pendiente)_ | `@` | Frontend / Visualización 3D |
 | _(pendiente)_ | `@` | Backend / Supabase e IA |
 | _(pendiente)_ | `@` | Producto / Pitch y documentación |
