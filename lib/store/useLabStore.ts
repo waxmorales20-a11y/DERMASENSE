@@ -181,8 +181,11 @@ export const useLabStore = create<LabState>((set, get) => ({
         result,
         status: 'ready',
         errorMessage: null,
-        currentFrameIndex: result.frames.length - 1, // Ir por defecto al frame final
-        isPlaying: false,
+        // Arranca en t=0 y reproduce: lo que esta pantalla aporta sobre una
+        // tabla de metricas es ver el frente de difusion avanzar capa a capa.
+        // Saltar al fotograma final se lo saltaba entero.
+        currentFrameIndex: 0,
+        isPlaying: true,
       });
     } catch (err) {
       // Preservar el resultado previo si existe (Invariante de APP_FLOW.md §3)

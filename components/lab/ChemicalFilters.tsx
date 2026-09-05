@@ -158,11 +158,10 @@ export const ChemicalFilters: React.FC = () => {
         <button
           onClick={runSimulation}
           disabled={isRunning}
-          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-wide transition-all cursor-pointer shrink-0 ${
-            isConfiguring
-              ? 'bg-accent text-bg shadow-sm shadow-accent/20 animate-pulse'
-              : 'bg-accent-soft text-accent hover:bg-accent hover:text-bg'
-          } disabled:opacity-50`}
+          title={isConfiguring ? 'Hay cambios sin simular' : 'Ejecutar la simulación'}
+          className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold tracking-wide transition-all cursor-pointer shrink-0 bg-accent text-bg shadow-sm shadow-accent/30 hover:brightness-110 disabled:opacity-50 ${
+            isConfiguring ? 'ring-2 ring-accent/50 ring-offset-2 ring-offset-surface animate-pulse' : ''
+          }`}
         >
           <Sparkles className="h-3.5 w-3.5" />
           <span>{isRunning ? 'Calculando...' : 'Simular'}</span>

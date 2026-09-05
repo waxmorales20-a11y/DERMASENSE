@@ -29,79 +29,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
   const [copied, setCopied] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  /**
-   * Descarga el libro Excel de 7 hojas.
-   *
-   * El backend lo arma leyendo la simulación de Supabase, así que **primero hay
-   * que guardarla**. Se hace aquí en dos pasos en vez de exigirle al usuario que
-   * guarde antes: guardar y exportar son la misma intención desde su lado.
-   */
-  const handleExportExcel = async () => {
-    if (!result || exporting) return;
-    setExporting(true);
-
-    try {
-      const saved = await fetch('/api/simulations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: result.input, metrics: result.metrics }),
-      });
-
-      if (!saved.ok) {
-        const body = await saved.json().catch(() => null);
-        toast.error('No se pudo guardar la simulación', {
-          description:
-            body?.error?.code === 'UNAUTHORIZED'
-              ? 'Inicia sesión: el reporte Excel se genera desde tu simulación guardada.'
-              : (body?.error?.message ?? 'Inténtalo de nuevo.'),
-        });
-        return;
-      }
-
-      const { id } = await saved.json();
-
-      // Una simulación en modo invitado no llega a la base: no hay nada que
-      // exportar y decirlo es mejor que devolver un archivo vacío.
-      if (!id || String(id).startsWith('mock-sim-')) {
-        toast.info('Simulación guardada solo en este navegador', {
-          description: 'Inicia sesión para generar el reporte Excel.',
-        });
-        return;
-      }
-
-      const res = await fetch(`/api/exports/${id}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        toast.error('No se pudo generar el Excel', {
-          description: body?.error?.message ?? 'Inténtalo de nuevo en unos segundos.',
-        });
-        return;
-      }
-
-      const blob = await res.blob();
-      const disposition = res.headers.get('content-disposition') ?? '';
-      const match = disposition.match(/filename="?([^"]+)"?/);
-      const url = URL.createObjectURL(blob);
-
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = match?.[1] ?? `dermasense_${String(id).slice(0, 8)}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-
-      toast.success('Reporte Excel descargado', {
-        description:
-          '7 hojas: formulación, propiedades, evidencia, simulación, ML, análisis IA y regulatorio.',
-      });
-    } catch {
-      toast.error('Error de red al generar el reporte');
-    } finally {
-      setExporting(false);
-    }
-  };
-
   const fetchReport = async (forceMock = false) => {
     if (!result) return;
     setLoading(true);
@@ -128,7 +55,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
       } else {
         setReportText(data.content);
       }
-    } catch (err) {
+    } catch {
       setError('Error de conexión con el endpoint de reporte. Las métricas permanecen disponibles.');
     } finally {
       setLoading(false);
@@ -140,7 +67,69 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
     if (isOpen && !reportText && !loading) {
       fetchReport(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  /**
+   * Descarga el libro Excel de 7 hojas.
+   *
+   * El backend lo arma leyendo la simulación de Supabase, así que **primero hay
+   * que guardarla**. Se hace aquí en dos pasos en vez de exigirle al usuario que
+   * guarde antes: guardar y exportar son la misma intención desde su lado.
+   */
+  /**
+   * Descarga el libro Excel de 7 hojas.
+   *
+   * Se genera directamente desde las métricas que el motor calculó en este
+   * navegador: no hace falta guardar la simulación ni iniciar sesión. Si hay un
+   * informe de IA en pantalla, viaja con él y ocupa la hoja 6.
+   */
+  const handleExportExcel = async () => {
+    if (!result || exporting) return;
+    setExporting(true);
+
+    try {
+      const res = await fetch('/api/exports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          input: result.input,
+          metrics: result.metrics,
+          report_content: reportText,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error('No se pudo generar el Excel', {
+          description: body?.error?.message ?? 'Inténtalo de nuevo en unos segundos.',
+        });
+        return;
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get('content-disposition') ?? '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = match?.[1] ?? 'dermasense.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+
+      toast.success('Reporte Excel descargado', {
+        description:
+          '7 hojas: formulación, propiedades, evidencia, simulación, ML, análisis IA y regulatorio.',
+      });
+    } catch {
+      toast.error('Error de red al generar el reporte');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const handleCopy = () => {
     if (!reportText) return;
