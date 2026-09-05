@@ -88,19 +88,75 @@ create table public.profiles (
   created_at   timestamptz not null default now()
 );
 
--- Catálogo de ingredientes activos (lectura pública)
+-- Catálogo de ingredientes activos.
+-- owner_id NULL = catálogo público curado. owner_id con valor = ingrediente
+-- privado del usuario, nunca visible para nadie más (ver docs/DATA_SOURCES.md §3.6).
 create table public.ingredients (
   id                  uuid primary key default gen_random_uuid(),
-  name                text not null unique,
+  owner_id            uuid references public.profiles(id) on delete cascade,
+  name                text not null,
   inci_name           text,
   molecular_weight    numeric(8,2) not null check (molecular_weight > 0),
-  log_p               numeric(5,2) not null,
+  log_p               numeric(5,2) not null check (log_p between -5 and 10),
   pka                 numeric(5,2),
   category            text not null,
   risk_flags          text[] not null default '{}',
-  reference_threshold numeric(10,4),   -- umbral de exposición para el índice heurístico
-  source              text,            -- procedencia del dato fisicoquímico
-  created_at          timestamptz not null default now()
+
+  -- Procedencia por campo, no por fila: el MW puede estar verificado y el
+  -- logP solo estimado. Ver docs/DATA_SOURCES.md §3.3.
+  --   { "log_p": { "db":"PubChem", "id":"CID 338",
+  --                "type":"experimental", "level":"verified" }, ... }
+  sources             jsonb not null default '{}',
+
+  -- Peor nivel entre todos los campos: gobierna la etiqueta que ve el usuario.
+  data_level          text not null default 'heuristic'
+                      check (data_level in ('verified','literature','estimated','heuristic')),
+
+  -- Límite regulatorio de uso. Sustituye al reference_threshold circular como
+  -- denominador del índice de irritación. Ver docs/DATA_SOURCES.md §7.
+  max_use_concentration numeric(6,3),
+  regulation_ref        text,          -- p. ej. 'Reg. (CE) 1223/2009 Anexo III'
+  regulation_version    text,          -- las restricciones cambian con el tiempo
+  regulation_checked_at date,
+
+  created_at          timestamptz not null default now(),
+
+  -- El catálogo público no admite nombres repetidos; los privados sí pueden
+  -- coincidir con uno público (es el mismo activo con datos del proveedor).
+  constraint ingredients_public_name_unique unique nulls not distinct (owner_id, name)
+);
+
+-- Modelos de piel por sitio anatómico. El estrato córneo varía más de 20x
+-- entre zonas, así que simular una crema facial con datos de antebrazo es
+-- el error de parametrización más caro del sistema.
+create table public.skin_models (
+  id            uuid primary key default gen_random_uuid(),
+  site          text not null unique,   -- 'volar_forearm', 'cheek', 'scalp', ...
+  label         text not null,
+  -- Un array de 4 objetos {layer, thickness_um, diffusivity_ref, elimination_rate}
+  layers        jsonb not null,
+  data_level    text not null default 'literature'
+                check (data_level in ('verified','literature','estimated','heuristic')),
+  source        text,
+  -- Advertencia mostrada al seleccionar el preset (p. ej. la vía folicular
+  -- del cuero cabelludo, que el modelo no simula).
+  caveat        text,
+  is_default    boolean not null default false,
+  created_at    timestamptz not null default now()
+);
+
+-- Conjunto de referencia con permeabilidades medidas en laboratorio.
+-- Permite publicar un error real (predicho vs medido) en lugar de una promesa.
+create table public.validation_records (
+  id             uuid primary key default gen_random_uuid(),
+  dataset        text not null default 'flynn_1990',
+  compound_name  text not null,
+  molecular_weight numeric(8,2) not null,
+  log_p          numeric(5,2) not null,
+  log_kp_measured numeric(6,3) not null,   -- valor experimental de referencia
+  source         text not null,
+  created_at     timestamptz not null default now(),
+  unique (dataset, compound_name)
 );
 
 -- Catálogo de vehículos
@@ -119,6 +175,7 @@ create table public.simulations (
   user_id             uuid not null references public.profiles(id) on delete cascade,
   ingredient_id       uuid references public.ingredients(id) on delete set null,
   vehicle_id          uuid references public.vehicles(id) on delete set null,
+  skin_model_id       uuid references public.skin_models(id) on delete set null,
   title               text not null default 'Simulación sin título',
   concentration_pct   numeric(6,3) not null check (concentration_pct > 0 and concentration_pct <= 30),
   ph                  numeric(4,2)  not null check (ph between 3.0 and 9.0),
@@ -153,6 +210,8 @@ create index simulations_metrics_gin
   on public.simulations using gin (metrics jsonb_path_ops);
 create index ingredients_name_trgm_idx
   on public.ingredients using gin (name gin_trgm_ops);
+create index ingredients_owner_idx
+  on public.ingredients (owner_id) where owner_id is not null;
 ```
 
 > `input_snapshot` es deliberadamente redundante con las columnas escalares. Las columnas
@@ -173,6 +232,8 @@ alter table public.simulations enable row level security;
 alter table public.ai_reports  enable row level security;
 alter table public.ingredients enable row level security;
 alter table public.vehicles    enable row level security;
+alter table public.skin_models enable row level security;
+alter table public.validation_records enable row level security;
 
 -- Perfiles: cada usuario ve y edita solo el suyo
 create policy "profiles_select_own" on public.profiles
@@ -180,10 +241,29 @@ create policy "profiles_select_own" on public.profiles
 create policy "profiles_update_own" on public.profiles
   for update using (auth.uid() = id) with check (auth.uid() = id);
 
--- Catálogos: lectura para cualquier usuario autenticado, escritura solo por service_role
-create policy "ingredients_read" on public.ingredients
-  for select to authenticated using (true);
+-- Catálogo público: legible por cualquier autenticado.
+-- Ingredientes privados: SOLO su dueño. Esta política es la que protege la
+-- propiedad intelectual del cliente, el dato más sensible de la plataforma.
+create policy "ingredients_read_public_or_own" on public.ingredients
+  for select to authenticated
+  using (owner_id is null or owner_id = auth.uid());
+
+create policy "ingredients_insert_own" on public.ingredients
+  for insert to authenticated
+  with check (owner_id = auth.uid());   -- nadie puede insertar en el catálogo público
+
+create policy "ingredients_update_own" on public.ingredients
+  for update to authenticated
+  using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+
+create policy "ingredients_delete_own" on public.ingredients
+  for delete to authenticated using (owner_id = auth.uid());
+
 create policy "vehicles_read" on public.vehicles
+  for select to authenticated using (true);
+create policy "skin_models_read" on public.skin_models
+  for select to authenticated using (true);
+create policy "validation_read" on public.validation_records
   for select to authenticated using (true);
 
 -- Simulaciones: aislamiento total por usuario

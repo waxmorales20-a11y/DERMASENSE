@@ -93,6 +93,7 @@ Requisitos: Node.js >= 20, cuenta Supabase, API key de Anthropic.
 | [docs/UI_UX_DESIGN_BRIEF.md](docs/UI_UX_DESIGN_BRIEF.md) | Design brief, tokens y componentes |
 | [docs/BACKEND_SCHEMA.md](docs/BACKEND_SCHEMA.md) | Esquema PostgreSQL, RLS y contratos API |
 | [docs/SIMULATION_MODEL.md](docs/SIMULATION_MODEL.md) | Modelo matemático, supuestos y limitaciones |
+| [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) | **Procedencia de cada dato**: qué es real, qué es estimado y qué falta |
 | [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Plan de implementación por horas |
 | [docs/AI_PROMPTS.md](docs/AI_PROMPTS.md) | Prompts de sistema del módulo de IA |
 | [docs/adr/](docs/adr/) | Architecture Decision Records |

@@ -183,7 +183,25 @@ reporte generado por IA. Ocultarlas sería el mayor riesgo reputacional del prod
 
 ---
 
-## 7. Referencias
+## 7. Procedencia de los datos
+
+Cada parámetro de este documento tiene un nivel de calidad declarado (verificado,
+literatura, estimado o heurístico) y una acción de curación pendiente. El detalle completo
+—incluida la auditoría honesta de qué valores están inventados y cuáles no— está en
+[DATA_SOURCES.md](DATA_SOURCES.md).
+
+Dos correcciones ya identificadas y pendientes de implementar:
+
+1. **La difusividad en epidermis y dermis debe depender del peso molecular**
+   (`D ∝ MW^-0.6`, base en Stokes-Einstein). Hoy es constante, lo que implicaría que la
+   cafeína y un péptido difunden igual: es un error físico, no una imprecisión.
+2. **El `referenceThreshold` del índice de irritación debe ser el límite regulatorio de uso**
+   (Reg. CE 1223/2009, SCCS, CIR) en lugar del 5 % de la concentración del vehículo, que es
+   un criterio circular.
+
+---
+
+## 8. Referencias
 
 - Potts, R.O. & Guy, R.H. (1992). *Predicting skin permeability.* Pharmaceutical Research, 9(5), 663–669.
 - Bos, J.D. & Meinardi, M.M. (2000). *The 500 Dalton rule for skin penetration.* Experimental Dermatology, 9(3), 165–169.
