@@ -1,26 +1,131 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Paleta base minimalista — Negro claro (#12141A) */
+  --bg: #12141A;
+  --surface: #181B22;
+  --surface-2: #20242D;
+  --border: #2A2E39;
+  --text: #F1F3F7;
+  --text-muted: #8E95A5;
+  --accent: #38BDF8;
+  --accent-soft: rgba(56, 189, 248, 0.12);
+
+  /* Colores semanticos refinados */
+  --ok: #34D399;
+  --warn: #FBBF24;
+  --risk: #F87171;
+  --risk-high: #EF4444;
+
+  /* Capas de piel (identificadores categoricos sobrios) */
+  --layer-sc: #D4AF37; /* Estrato corneo (queratina) */
+  --layer-ve: #E0A88A; /* Epidermis viable */
+  --layer-de: #C97B7B; /* Dermis */
+  --layer-hy: #E8C87E; /* Hipodermis (adiposo) */
+
+  /* Escala secuencial de concentracion uniforme */
+  --conc-0: #12141A;
+  --conc-1: #1A2436;
+  --conc-2: #1E3A52;
+  --conc-3: #225C6E;
+  --conc-4: #2A8270;
+  --conc-5: #6BBF72;
+  --conc-6: #F5A25D;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root.light,
+[data-theme="light"] {
+  --bg: #FFFFFF;
+  --surface: #F8FAFC;
+  --surface-2: #F1F5F9;
+  --border: #E2E8F0;
+  --text: #0F172A;
+  --text-muted: #64748B;
+  --accent: #0891B2;
+  --accent-soft: #CFFAFE;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-risk: var(--risk);
+  --color-risk-high: var(--risk-high);
+
+  --color-layer-sc: var(--layer-sc);
+  --color-layer-ve: var(--layer-ve);
+  --color-layer-de: var(--layer-de);
+  --color-layer-hy: var(--layer-hy);
+
+  --color-conc-0: var(--conc-0);
+  --color-conc-1: var(--conc-1);
+  --color-conc-2: var(--conc-2);
+  --color-conc-3: var(--conc-3);
+  --color-conc-4: var(--conc-4);
+  --color-conc-5: var(--conc-5);
+  --color-conc-6: var(--conc-6);
+
+  --font-sans: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Reglas base de renderizado y precision */
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Cifras tabulares obligatorias en datos numericos comparables */
+.tabular-nums,
+[data-tabular-nums],
+.num-metric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" on;
+}
+
+/* Foco accesible de alta visibilidad para instrumentacion de laboratorio */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Seleccion sutil de texto */
+::selection {
+  background-color: var(--accent-soft);
+  color: var(--text);
+}
+
+/* Barra de desplazamiento tecnica discreta */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }

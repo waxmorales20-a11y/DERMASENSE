@@ -26,12 +26,20 @@ export default function Home() {
           </p>
         </div>
 
-        <a
-          href="https://github.com/waxmorales20-a11y/DERMASENSE"
-          className="rounded-md bg-[#22D3EE] px-5 py-2.5 font-medium text-[#0B1120] transition-opacity hover:opacity-90"
-        >
-          Ver documentación en GitHub
-        </a>
+        <div className="flex flex-wrap items-center gap-4">
+          <a
+            href="/lab"
+            className="rounded-md bg-[#22D3EE] px-5 py-2.5 font-semibold text-[#0B1120] transition-all hover:bg-[#22D3EE]/90 shadow-[0_0_20px_rgba(34,211,238,0.3)]"
+          >
+            Abrir Laboratorio Virtual →
+          </a>
+          <a
+            href="https://github.com/waxmorales20-a11y/DERMASENSE"
+            className="rounded-md border border-[#22304C] bg-[#111C31] px-5 py-2.5 font-medium text-[#E8EEF7] transition-colors hover:border-[#22D3EE]"
+          >
+            Ver documentación en GitHub
+          </a>
+        </div>
       </main>
     </div>
   );

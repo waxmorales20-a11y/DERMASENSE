@@ -25,8 +25,8 @@ coverage/
 .supabase/
 
 # Herramientas de agentes de IA (config local, no es codigo del proyecto)
-.claude/settings.local.json
-.claude/skills/
+.claude/
+.codex/
 .agents/
 agent/
 .engram/

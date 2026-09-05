@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const inter = Inter({
@@ -28,7 +29,21 @@ export default function RootLayout({
       lang="es"
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <Toaster
+          position="bottom-right"
+          theme="dark"
+          toastOptions={{
+            style: {
+              background: '#111C31',
+              borderColor: '#22304C',
+              color: '#E8EEF7',
+              fontFamily: 'var(--font-sans)',
+            },
+          }}
+        />
+      </body>
     </html>
   );
 }
