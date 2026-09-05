@@ -19,7 +19,7 @@ export const ConfidenceBanner: React.FC<ConfidenceBannerProps> = ({ confidence, 
       className={`flex flex-col gap-2 rounded-lg border p-3 text-xs ${
         isLow
           ? 'border-warn/50 bg-warn/10 text-warn'
-          : 'border-yellow-500/40 bg-yellow-500/10 text-yellow-300'
+          : 'border-warn/40 bg-warn/10 text-warn'
       }`}
       role="alert"
     >

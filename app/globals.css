@@ -1,19 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  /* Paleta base minimalista — Negro claro (#12141A) */
-  --bg: #12141A;
-  --surface: #181B22;
-  --surface-2: #20242D;
-  --border: #2A2E39;
-  --text: #F1F3F7;
-  --text-muted: #8E95A5;
-  --accent: #38BDF8;
-  --accent-soft: rgba(56, 189, 248, 0.12);
+  /* Paleta base monocroma — Modo negro puro.
+     Un unico acento (cian) + rojo reservado a irritacion: sin ruido cromatico. */
+  --bg: #000000;
+  --surface: #0A0A0C;
+  --surface-2: #131317;
+  --border: #232328;
+  --text: #ECECEF;
+  --text-muted: #8A8A94;
+  --accent: #22D3EE;
+  --accent-soft: rgba(34, 211, 238, 0.10);
 
-  /* Colores semanticos refinados */
-  --ok: #34D399;
-  --warn: #FBBF24;
+  /* Colores semanticos sobrios: neutro para lo normal, rojo solo para riesgo */
+  --ok: #A1A1AA;
+  --warn: #C9A24B;
   --risk: #F87171;
   --risk-high: #EF4444;
 

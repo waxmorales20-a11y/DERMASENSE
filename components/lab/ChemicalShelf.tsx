@@ -126,7 +126,7 @@ export const ChemicalShelf: React.FC = () => {
         {/* Selector de Vehículo */}
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded bg-surface-2 text-text-muted">
-            <Droplet className="h-4 w-4 text-cyan-400" />
+            <Droplet className="h-4 w-4 text-accent" />
           </span>
           <div className="flex flex-col">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
@@ -152,7 +152,7 @@ export const ChemicalShelf: React.FC = () => {
         {/* Sitio Anatómico de la piel */}
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded bg-surface-2 text-text-muted">
-            <Layers className="h-4 w-4 text-amber-400" />
+            <Layers className="h-4 w-4 text-text-muted" />
           </span>
           <div className="flex flex-col">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">

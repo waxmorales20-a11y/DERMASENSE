@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLabStore } from '@/lib/store/useLabStore';
+import { applyAssistantVoice, pickAssistantVoice } from '@/lib/voice';
 import {
   Volume2,
   VolumeX,
@@ -25,7 +26,7 @@ interface NarrativeEntry {
 }
 
 export const ScientificNarrator: React.FC = () => {
-  const { result, currentFrameIndex, zoomLevel } = useLabStore();
+  const { result, currentFrameIndex, zoomLevel, getSite } = useLabStore();
 
   const [isVoiceActive, setIsVoiceActive] = useState<boolean>(false);
   const [speechRate, setSpeechRate] = useState<number>(1.0);
@@ -33,6 +34,7 @@ export const ScientificNarrator: React.FC = () => {
   const [lastSpokenMilestone, setLastSpokenMilestone] = useState<string>('');
   const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
   const prevZoomRef = useRef<number>(0.0);
+  const feedRef = useRef<HTMLDivElement | null>(null);
 
   const currentFrame = result?.frames[currentFrameIndex];
   const metrics = result?.metrics;
@@ -46,14 +48,10 @@ export const ScientificNarrator: React.FC = () => {
       const voices = window.speechSynthesis.getVoices();
       if (!voices || voices.length === 0) return;
 
-      const spanishVoice =
-        voices.find((v) => v.lang === 'es-ES') ||
-        voices.find((v) => v.lang.startsWith('es-')) ||
-        voices.find((v) => v.lang.includes('es')) ||
-        voices[0];
-
-      if (spanishVoice) {
-        setSelectedVoice(spanishVoice);
+      // Voz femenina en espanol, serena, al estilo de un asistente de laboratorio.
+      const assistantVoice = pickAssistantVoice(voices);
+      if (assistantVoice) {
+        setSelectedVoice(assistantVoice);
       }
     };
 
@@ -76,12 +74,7 @@ export const ScientificNarrator: React.FC = () => {
         window.speechSynthesis.cancel();
 
         const utterance = new SpeechSynthesisUtterance(text);
-        if (selectedVoice) {
-          utterance.voice = selectedVoice;
-        }
-        utterance.lang = selectedVoice?.lang || 'es-ES';
-        utterance.rate = speechRate;
-        utterance.pitch = 1.0;
+        applyAssistantVoice(utterance, selectedVoice, speechRate);
 
         utterance.onstart = () => setIsSpeaking(true);
         utterance.onend = () => setIsSpeaking(false);
@@ -174,6 +167,65 @@ export const ScientificNarrator: React.FC = () => {
     return entries;
   }, [result, currentFrame, metrics, input]);
 
+  // 3-bis. Estado en vivo: que esta ocurriendo exactamente en este instante.
+  // Todos los valores provienen del motor; aqui solo se leen y se presentan.
+  const liveStatus = useMemo(() => {
+    if (!result || !currentFrame || !metrics) return null;
+
+    const { mesh, frames } = result;
+    const layers = getSite().layers;
+
+    let maxConc = 1e-6;
+    for (const frame of frames) {
+      for (let i = 0; i < frame.concentrations.length; i++) {
+        if (frame.concentrations[i] > maxConc) maxConc = frame.concentrations[i];
+      }
+    }
+
+    const detectionThreshold = maxConc * 0.02;
+    let deepestIdx = 0;
+    let veSum = 0;
+    let veCount = 0;
+
+    for (let i = 0; i < mesh.positionsUm.length; i++) {
+      const conc = currentFrame.concentrations[i];
+      if (conc >= detectionThreshold) deepestIdx = i;
+      if (mesh.layerIndex[i] === 1) {
+        veSum += conc;
+        veCount += 1;
+      }
+    }
+
+    const frontDepthUm = mesh.positionsUm[deepestIdx];
+    const frontLayerLabel = layers[mesh.layerIndex[deepestIdx]]?.label ?? '—';
+    const veMeanConc = veCount > 0 ? veSum / veCount : 0;
+
+    const timeHours = currentFrame.timeHours;
+    const totalHours = frames[frames.length - 1].timeHours;
+    const lag = metrics.lagTimeHours;
+
+    let phase: string;
+    if (timeHours < lag * 0.5) {
+      phase = 'Depósito sobre el estrato córneo';
+    } else if (timeHours < lag) {
+      phase = 'Travesía de la barrera lipídica';
+    } else if (metrics.irritationIndex >= 45) {
+      phase = 'Difusión con respuesta inflamatoria';
+    } else {
+      phase = 'Difusión y distribución dérmica';
+    }
+
+    return {
+      phase,
+      timeHours,
+      totalHours,
+      frontDepthUm,
+      frontLayerLabel,
+      veMeanConc,
+      progressPct: totalHours > 0 ? Math.min(100, (timeHours / totalHours) * 100) : 0,
+    };
+  }, [result, currentFrame, metrics, getSite]);
+
   // 4. Disparo automático de voz al avanzar por hitos si la voz está activada
   useEffect(() => {
     if (!isVoiceActive || narrativeFeed.length === 0) return;
@@ -184,6 +236,12 @@ export const ScientificNarrator: React.FC = () => {
       speakText(latestEntry.spokenText);
     }
   }, [isVoiceActive, narrativeFeed, lastSpokenMilestone, speakText]);
+
+  // 4-bis. El último hito siempre visible sin tener que desplazarse.
+  useEffect(() => {
+    const feed = feedRef.current;
+    if (feed) feed.scrollTop = feed.scrollHeight;
+  }, [narrativeFeed]);
 
   // 5. Narración de voz sincronizada con la transición Macro ⇄ Micro
   useEffect(() => {
@@ -320,16 +378,16 @@ export const ScientificNarrator: React.FC = () => {
           {/* Botón Principal de Mute / Unmute */}
           <button
             onClick={toggleVoice}
-            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
+            className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
               isVoiceActive
-                ? 'border border-accent/40 bg-accent/20 text-accent hover:bg-accent hover:text-bg shadow-xs shadow-accent/20'
-                : 'border border-border bg-surface text-text-muted hover:border-accent hover:text-text'
+                ? 'border-accent/50 bg-accent-soft text-accent'
+                : 'border-border bg-surface text-text-muted hover:text-text'
             }`}
             title={isVoiceActive ? 'Silenciar voz del narrador' : 'Activar voz del narrador'}
           >
             {isVoiceActive ? (
               <>
-                <Volume2 className="h-3.5 w-3.5 animate-pulse text-accent" />
+                <Volume2 className="h-3.5 w-3.5 text-accent" />
                 <span className="font-semibold">Voz ON</span>
               </>
             ) : (
@@ -344,17 +402,71 @@ export const ScientificNarrator: React.FC = () => {
 
       {/* Banner reactivo si hay alerta de quemadura / irritación */}
       {isErythemaActive && (
-        <div className="flex items-center gap-2 border-b border-red-500/40 bg-red-950/40 px-3.5 py-2 text-xs text-red-200">
-          <Flame className="h-4 w-4 shrink-0 animate-bounce text-red-400" />
-          <div className="flex-1 text-[11px] leading-snug">
-            <span className="font-bold text-red-300">Respuesta reactiva detectada: </span>
-            La piel exhibe tinte rojo por potencial daño citotóxico o irritación (Índice: {metrics.irritationIndex}/100).
+        <div className="flex items-center gap-2 border-b border-risk-high/40 bg-risk-high/10 px-3.5 py-2">
+          <Flame className="h-4 w-4 shrink-0 text-risk-high" />
+          <div className="flex-1 text-xs leading-snug text-text">
+            <span className="font-semibold text-risk-high">Respuesta reactiva detectada: </span>
+            las capas dérmicas se tiñen de rojo por irritación potencial (índice heurístico{' '}
+            <span className="tabular-nums">{metrics.irritationIndex}</span>/100).
           </div>
         </div>
       )}
 
+      {/* Qué está pasando ahora mismo: lectura directa del estado del motor */}
+      {liveStatus && (
+        <div className="flex flex-col gap-2 border-b border-border bg-surface-2/60 px-3.5 py-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+              Qué está pasando ahora
+            </span>
+            <span className="font-mono text-[11px] tabular-nums text-text-muted">
+              {liveStatus.timeHours.toFixed(1)} h / {liveStatus.totalHours.toFixed(0)} h
+            </span>
+          </div>
+
+          <p className="text-sm font-semibold leading-snug text-text">{liveStatus.phase}</p>
+
+          {/* Progreso temporal de la simulación */}
+          <div className="h-1 w-full overflow-hidden rounded-full bg-surface">
+            <div
+              className="h-full rounded-full bg-accent transition-[width] duration-300"
+              style={{ width: `${liveStatus.progressPct}%` }}
+            />
+          </div>
+
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-0.5 text-xs">
+            <div className="flex flex-col">
+              <dt className="text-[10px] text-text-muted">Frente de difusión</dt>
+              <dd className="tabular-nums font-medium text-text">
+                {liveStatus.frontDepthUm.toFixed(0)} µm
+              </dd>
+            </div>
+            <div className="flex flex-col">
+              <dt className="text-[10px] text-text-muted">Capa alcanzada</dt>
+              <dd className="font-medium text-text">{liveStatus.frontLayerLabel}</dd>
+            </div>
+            <div className="flex flex-col">
+              <dt className="text-[10px] text-text-muted">Conc. media en epidermis viable</dt>
+              <dd className="tabular-nums font-medium text-text">
+                {liveStatus.veMeanConc.toFixed(2)} µg/cm³
+              </dd>
+            </div>
+            <div className="flex flex-col">
+              <dt className="text-[10px] text-text-muted">Irritación (heurística)</dt>
+              <dd
+                className={`tabular-nums font-medium ${
+                  isErythemaActive ? 'text-risk-high' : 'text-text'
+                }`}
+              >
+                {metrics.irritationIndex}/100 · {metrics.irritationBand}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      )}
+
       {/* Feed del Chat Científico con scroll */}
-      <div className="flex flex-1 flex-col gap-2.5 overflow-y-auto p-3.5 text-xs">
+      <div ref={feedRef} className="flex flex-1 flex-col gap-2.5 overflow-y-auto p-3.5 text-xs">
         {narrativeFeed.map((entry) => {
           const isBurnType = entry.type === 'burn';
           const isBarrierType = entry.type === 'barrier';
@@ -362,26 +474,26 @@ export const ScientificNarrator: React.FC = () => {
           return (
             <div
               key={entry.id}
-              className={`group relative flex flex-col gap-1 rounded-lg border p-2.5 transition-all ${
+              className={`group relative flex flex-col gap-1 rounded-lg border p-2.5 transition-colors ${
                 isBurnType
-                  ? 'border-red-500/50 bg-red-950/20 text-red-100 shadow-[0_0_15px_rgba(239,68,68,0.15)]'
+                  ? 'border-risk-high/45 bg-risk-high/8 text-text'
                   : isBarrierType
-                  ? 'border-accent/40 bg-surface-2/60 text-text'
-                  : 'border-border/60 bg-surface/50 text-text'
+                  ? 'border-border bg-surface-2/60 text-text'
+                  : 'border-border bg-surface/50 text-text'
               }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
                   {isBurnType ? (
-                    <Flame className="h-3.5 w-3.5 text-red-400" />
+                    <Flame className="h-3.5 w-3.5 text-risk-high" />
                   ) : isBarrierType ? (
                     <Layers className="h-3.5 w-3.5 text-accent" />
                   ) : (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-ok" />
+                    <CheckCircle2 className="h-3.5 w-3.5 text-text-muted" />
                   )}
                   <span
-                    className={`font-semibold text-[11px] ${
-                      isBurnType ? 'text-red-300 font-bold' : 'text-text'
+                    className={`text-xs font-semibold ${
+                      isBurnType ? 'text-risk-high' : 'text-text'
                     }`}
                   >
                     {entry.title}
@@ -402,9 +514,7 @@ export const ScientificNarrator: React.FC = () => {
                 </div>
               </div>
 
-              <p className="text-[11px] leading-relaxed text-text/90 font-sans">
-                {entry.message}
-              </p>
+              <p className="font-sans text-xs leading-relaxed text-text/90">{entry.message}</p>
             </div>
           );
         })}

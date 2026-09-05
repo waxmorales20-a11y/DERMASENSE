@@ -259,7 +259,7 @@ export default function FormulationPage() {
                   className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-surface-2 accent-accent"
                 />
                 <div className="flex items-center justify-between text-[10px] text-text-muted">
-                  <span className={pH < 4.0 ? 'text-red-400 font-bold' : ''}>3.0 (Ácido / Exfoliante)</span>
+                  <span className={pH < 4.0 ? 'text-risk font-semibold' : ''}>3.0 (Ácido / Exfoliante)</span>
                   <span>5.5 (Fisiológico)</span>
                   <span>9.0 (Alcalino)</span>
                 </div>
@@ -268,7 +268,7 @@ export default function FormulationPage() {
               {/* Selector de Vehículo Portador */}
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-medium text-text flex items-center gap-1.5">
-                  <Droplet className="h-3.5 w-3.5 text-cyan-400" />
+                  <Droplet className="h-3.5 w-3.5 text-accent" />
                   <span>Vehículo Portador</span>
                 </label>
                 <div className="grid grid-cols-1 gap-2">
@@ -300,7 +300,7 @@ export default function FormulationPage() {
               {/* Selector de Sitio Anatómico */}
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-medium text-text flex items-center gap-1.5">
-                  <Layers className="h-3.5 w-3.5 text-amber-400" />
+                  <Layers className="h-3.5 w-3.5 text-text-muted" />
                   <span>Sitio Anatómico de la Piel</span>
                 </label>
                 <select

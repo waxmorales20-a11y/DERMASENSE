@@ -121,7 +121,7 @@ export const ChemicalFilters: React.FC = () => {
         <div className="flex flex-col gap-1 rounded-lg border border-border/80 bg-surface/60 p-2">
           <div className="flex items-center justify-between text-[11px]">
             <span className="text-text-muted">pH Fórmula</span>
-            <span className={`font-mono text-xs font-bold tabular-nums ${pH < 4.0 ? 'text-red-400' : 'text-text'}`}>
+            <span className={`font-mono text-xs font-bold tabular-nums ${pH < 4.0 ? 'text-risk' : 'text-text'}`}>
               {pH.toFixed(1)}
             </span>
           </div>

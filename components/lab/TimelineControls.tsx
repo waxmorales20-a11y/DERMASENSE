@@ -136,7 +136,7 @@ export const TimelineControls: React.FC = () => {
             className="h-3.5 w-36 rounded border border-border/80 shadow-xs"
             style={{
               background:
-                'linear-gradient(to right, #0B1120, #143A5A, #1D6E8E, #21A0A0, #6FCF7F, #E8E36B, #F5A25D)',
+                'linear-gradient(to right, #000000, #143A5A, #1D6E8E, #21A0A0, #6FCF7F, #E8E36B, #F5A25D)',
             }}
             title="Escala secuencial de concentración (perceptualmente uniforme)"
           />
