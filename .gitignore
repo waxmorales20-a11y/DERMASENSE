@@ -24,6 +24,14 @@ coverage/
 .vercel
 .supabase/
 
+# Herramientas de agentes de IA (config local, no es codigo del proyecto)
+.claude/settings.local.json
+.claude/skills/
+.agents/
+agent/
+.engram/
+skills-lock.json
+
 # Editor y SO
 .DS_Store
 Thumbs.db
@@ -40,3 +48,6 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+.vercel
+.env*
