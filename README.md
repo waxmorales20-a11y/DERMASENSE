@@ -9,6 +9,8 @@
 
 **🔗 Producción:** [dermasense-rose.vercel.app](https://dermasense-rose.vercel.app)
 
+**🔗 Backend (API científica):** [github.com/pashko577/DERMASENSE-BACKEND](https://github.com/pashko577/DERMASENSE-BACKEND.git)
+
 ---
 
 # 1. Problema
