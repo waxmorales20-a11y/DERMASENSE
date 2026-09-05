@@ -21,6 +21,7 @@ import {
   Sliders,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { EvidencePanel } from '@/components/lab/EvidencePanel';
 
 export default function FormulationPage() {
   const router = useRouter();
@@ -104,14 +105,59 @@ export default function FormulationPage() {
 
       {/* 2. Contenido Principal en Layout Espacioso y Minimalista */}
       <main className="mx-auto max-w-7xl px-4 py-8 lg:px-8">
-        {/* Banner introductorio sobrio */}
-        <div className="mb-8 flex flex-col gap-1 border-b border-border/80 pb-6">
-          <h2 className="text-2xl font-medium tracking-tight text-text">
-            Biblioteca de Principios Activos & Parámetros
-          </h2>
-          <p className="text-xs text-text-muted max-w-2xl leading-relaxed">
-            Selecciona el ingrediente activo de interés y calibra la formulación cosmética.
-            Los parámetros se integran en el motor determinista de difusión Fickiana de DERMASENSE.
+        {/* Qué es este módulo y cómo funciona */}
+        <div className="mb-8 flex flex-col gap-4 border-b border-border/80 pb-6">
+          <div className="flex flex-col gap-1.5">
+            <h2 className="text-2xl font-medium tracking-tight text-text">
+              Biblioteca de Principios Activos &amp; Parámetros
+            </h2>
+            <p className="max-w-3xl text-xs leading-relaxed text-text-muted">
+              Aquí se define <strong className="text-text">qué se va a simular</strong>: el activo,
+              su concentración, el vehículo que lo transporta, el pH y la zona de piel. Cada
+              parámetro entra directo en el motor de difusión, así que cambiarlo cambia el
+              resultado de la simulación 3D.
+            </p>
+          </div>
+
+          {/* Los tres pasos, y de dónde sale cada número */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {[
+              {
+                n: '01',
+                title: 'Eliges el activo',
+                body: 'Cinco activos curados con peso molecular y logP de PubChem. La tarjeta se pone en rojo si la concentración actual supera su máximo de referencia.',
+              },
+              {
+                n: '02',
+                title: 'Calibras la formulación',
+                body: 'Concentración, pH, vehículo, zona anatómica y duración. El vehículo multiplica el flujo; la zona cambia el espesor del estrato córneo, que varía más de 20x entre sitios.',
+              },
+              {
+                n: '03',
+                title: 'Compruebas si es defendible',
+                body: 'El panel de la derecha contrasta la formulación contra permeabilidades medidas en piel humana y contra el Reglamento (CE) 1223/2009, con su cita.',
+              },
+            ].map((step) => (
+              <div
+                key={step.n}
+                className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-surface/60 p-3"
+              >
+                <span className="font-mono text-[10px] font-bold text-accent">{step.n}</span>
+                <span className="text-[11px] font-semibold text-text">{step.title}</span>
+                <span className="text-[10px] leading-relaxed text-text-muted">{step.body}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Lo que el módulo NO hace. Va aquí y no en letra pequeña al final. */}
+          <p className="flex items-start gap-1.5 rounded-lg border border-border/60 bg-surface-2/40 p-2.5 text-[10px] leading-relaxed text-text-muted">
+            <ShieldAlert className="mt-px h-3.5 w-3.5 shrink-0 text-text-muted" />
+            <span>
+              El sistema <strong className="text-text">estima bajo supuestos declarados</strong>: no
+              valida, no garantiza ni asegura la seguridad de una formulación. El motor simula
+              difusión pasiva; no modela metabolismo cutáneo, vía folicular ni piel dañada. El
+              índice de irritación es heurístico y no está validado experimentalmente.
+            </span>
           </p>
         </div>
 
@@ -143,19 +189,30 @@ export default function FormulationPage() {
               </div>
             </div>
 
-            {/* Grid de 12 Activos */}
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            {/* Reja de activos, con scroll propio */}
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1 lg:[scrollbar-width:thin]">
               {filteredIngredients.map((ing) => {
                 const isSelected = ing.id === selectedIngredientId;
+                // La concentracion del slider es global: se compara contra el
+                // maximo de CADA activo para que la reja entera diga, de un
+                // vistazo, cuales admiten la concentracion elegida y cuales no.
+                const limit = ing.maxUseConcentration;
+                const exceedsLimit = limit !== undefined && concentrationPct > limit;
+                const nearLimit =
+                  limit !== undefined && !exceedsLimit && concentrationPct >= limit * 0.8;
 
                 return (
                   <button
                     key={ing.id}
                     onClick={() => setIngredientId(ing.id)}
                     className={`group relative flex flex-col justify-between rounded-xl border p-4 text-left transition-all cursor-pointer ${
-                      isSelected
-                        ? 'border-accent bg-surface-2/90 shadow-xs shadow-accent/10'
-                        : 'border-border/80 bg-surface/70 hover:border-border hover:bg-surface-2/40'
+                      exceedsLimit
+                        ? isSelected
+                          ? 'border-risk bg-risk/10 shadow-xs shadow-risk/10'
+                          : 'border-risk/40 bg-risk/[0.04] hover:border-risk/70'
+                        : isSelected
+                          ? 'border-accent bg-surface-2/90 shadow-xs shadow-accent/10'
+                          : 'border-border/80 bg-surface/70 hover:border-border hover:bg-surface-2/40'
                     }`}
                   >
                     <div>
@@ -170,7 +227,11 @@ export default function FormulationPage() {
                         </div>
 
                         {isSelected && (
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent text-bg shrink-0">
+                          <span
+                            className={`flex h-5 w-5 items-center justify-center rounded-full shrink-0 ${
+                              exceedsLimit ? 'bg-risk text-bg' : 'bg-accent text-bg'
+                            }`}
+                          >
                             <Check className="h-3 w-3" />
                           </span>
                         )}
@@ -187,18 +248,37 @@ export default function FormulationPage() {
                       <span className="rounded bg-surface-2 px-1.5 py-0.5 text-text-muted">
                         {ing.category}
                       </span>
-                      <span className="text-text-muted">
-                        Máx rec: <strong className="text-text font-mono">{ing.maxUseConcentration ? `${ing.maxUseConcentration}%` : 'Libre'}</strong>
+                      <span
+                        className={
+                          exceedsLimit ? 'text-risk font-semibold' : nearLimit ? 'text-warn' : 'text-text-muted'
+                        }
+                      >
+                        Máx rec:{' '}
+                        <strong className="font-mono">
+                          {limit !== undefined ? `${limit}%` : 'Libre'}
+                        </strong>
                       </span>
                     </div>
+
+                    {exceedsLimit && (
+                      <div className="mt-2 flex items-center gap-1 rounded-md bg-risk/15 px-1.5 py-1 text-[10px] font-semibold text-risk">
+                        <ShieldAlert className="h-3 w-3 shrink-0" />
+                        <span>
+                          {concentrationPct.toFixed(2)}% supera el máximo de {limit}%
+                        </span>
+                      </div>
+                    )}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Columna Derecha: Controles de Formulación y Vehículo (5 cols) */}
-          <div className="flex flex-col gap-6 lg:col-span-5">
+          {/* Columna Derecha: Controles de Formulación y Vehículo (5 cols).
+              Scroll propio y pegajosa: el panel es más alto que la ventana y,
+              sin esto, revisar la evidencia obliga a perder de vista el
+              catálogo de activos. */}
+          <div className="flex flex-col gap-6 lg:col-span-5 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1 lg:[scrollbar-width:thin]">
             {/* Tarjeta de Formulación Activa */}
             <div className="flex flex-col gap-5 rounded-2xl border border-border/80 bg-surface p-6 shadow-sm">
               <div className="flex items-center justify-between border-b border-border/80 pb-3">
@@ -353,6 +433,12 @@ export default function FormulationPage() {
                 <span>Aplicar Formulación e Ir a Simulación 3D</span>
               </button>
             </div>
+
+            {/* Evidencia del backend: error medido del modelo y reglamento */}
+            <EvidencePanel
+              ingredient={currentIngredient}
+              concentrationPct={concentrationPct}
+            />
           </div>
         </div>
       </main>

@@ -36,8 +36,27 @@ export interface AnatomicalSite {
 }
 
 /**
- * Catálogo curado de 12 ingredientes activos cosméticos con datos fisicoquímicos
- * verificados de PubChem (ver docs/BACKEND_SCHEMA.md §5 y docs/DATA_SOURCES.md §3).
+ * Catálogo curado de 5 ingredientes activos.
+ *
+ * La selección NO es arbitraria: se ordenó el catálogo completo por calidad de
+ * evidencia disponible en el backend (permeabilidad medida, cobertura
+ * regulatoria real, y si hay compuestos medidos parecidos con los que estimar
+ * el error del modelo) y se conservaron los mejor sostenidos.
+ *
+ *   · Ácido salicílico  — único con permeabilidad MEDIDA en el conjunto de
+ *                         validación (error del modelo 0.34 unidades log) y
+ *                         límite legal en el Anexo III del Reg. (CE) 1223/2009.
+ *   · Retinol           — límite legal (Reg. UE 2024/996). El modelo predice
+ *                         mal en su vecindario (error local 2.19): el panel de
+ *                         evidencia lo declara en lugar de ocultarlo.
+ *   · Ácido kójico      — límite legal (Reg. UE 2024/996) y error local 0.38.
+ *   · Niacinamida       — error local 0.38, el más estrecho del catálogo.
+ *   · Ácido hialurónico — incluido A PROPÓSITO como caso fuera de dominio:
+ *                         5 kDa excede los 500 Da y dispara confidence 'low'.
+ *                         Demuestra que el sistema reconoce sus propios límites.
+ *
+ * Datos fisicoquímicos de PubChem (docs/DATA_SOURCES.md §3). El backend expone
+ * el mismo catálogo en GET /api/v1/ingredients con procedencia por campo.
  */
 export const MOCK_INGREDIENTS: CatalogIngredient[] = [
   {
@@ -72,51 +91,20 @@ export const MOCK_INGREDIENTS: CatalogIngredient[] = [
       'Beta-hidroxiácido lipófilo con permeación transepidérmica y acción queratolítica folicular.',
   },
   {
-    id: 'glycolic-acid',
-    name: 'Ácido glicólico',
-    inciName: 'Glycolic Acid',
-    molecularWeight: 76.05,
-    logP: -1.11,
-    pka: 3.83,
-    category: 'AHA',
-    riskFlags: ['aha'],
-    source: 'PubChem CID 757',
+    id: 'kojic-acid',
+    name: 'Ácido kójico',
+    inciName: 'Kojic Acid',
+    molecularWeight: 142.11,
+    logP: -0.64,
+    pka: 7.9,
+    category: 'Despigmentante',
+    riskFlags: [],
+    source: 'PubChem CID 3840',
     dataLevel: 'verified',
-    maxUseConcentration: 10.0,
-    regulationRef: 'CIR Expert Panel (límite 10% y pH >= 3.5 en cosmética general)',
+    maxUseConcentration: 1.0,
+    regulationRef: 'Opinión SCCS/1641/22',
     description:
-      'AHA de muy bajo peso molecular; penetración rápida y sensible al pH de la formulación.',
-  },
-  {
-    id: 'lactic-acid',
-    name: 'Ácido láctico',
-    inciName: 'Lactic Acid',
-    molecularWeight: 90.08,
-    logP: -0.72,
-    pka: 3.86,
-    category: 'AHA',
-    riskFlags: ['aha'],
-    source: 'PubChem CID 612',
-    dataLevel: 'verified',
-    maxUseConcentration: 10.0,
-    regulationRef: 'CIR Expert Panel',
-    description:
-      'Alfa-hidroxiácido natural componente del NMF, con propiedades exfoliantes e higroscópicas.',
-  },
-  {
-    id: 'retinal',
-    name: 'Retinaldehído',
-    inciName: 'Retinal',
-    molecularWeight: 284.44,
-    logP: 6.31,
-    category: 'Retinoide',
-    riskFlags: ['retinoid'],
-    source: 'PubChem CID 638015',
-    dataLevel: 'verified',
-    maxUseConcentration: 0.05,
-    regulationRef: 'Reg. (UE) 2024/996 (límite 0.05% en facial)',
-    description:
-      'Precursor directo de ácido retinoico, potente y altamente lipófilo con fuerte retención en estrato córneo.',
+      'Inhibidor de tirosinasa con moderada hidrofilicidad y restricción de concentración por perfil toxicológico.',
   },
   {
     id: 'niacinamide',
@@ -135,54 +123,6 @@ export const MOCK_INGREDIENTS: CatalogIngredient[] = [
       'Vitamina B3 soluble en agua; refuerza la síntesis de ceramidas cutáneas y posee óptima tolerancia.',
   },
   {
-    id: 'ascorbic-acid',
-    name: 'Ácido ascórbico',
-    inciName: 'Ascorbic Acid',
-    molecularWeight: 176.12,
-    logP: -1.85,
-    pka: 4.1,
-    category: 'Antioxidante',
-    riskFlags: [],
-    source: 'PubChem CID 54670067',
-    dataLevel: 'verified',
-    maxUseConcentration: 15.0,
-    regulationRef: 'Formulaciones cosmecéuticas de referencia',
-    description:
-      'Vitamina C hidrofílica pura; requiere formulación a pH ácido (<3.5) para maximizar penetración dérmica.',
-  },
-  {
-    id: 'ferulic-acid',
-    name: 'Ácido ferúlico',
-    inciName: 'Ferulic Acid',
-    molecularWeight: 194.18,
-    logP: 1.51,
-    pka: 4.58,
-    category: 'Antioxidante',
-    riskFlags: [],
-    source: 'PubChem CID 445858',
-    dataLevel: 'verified',
-    maxUseConcentration: 1.0,
-    regulationRef: 'Criterio de estabilidad fisicoquímica',
-    description:
-      'Antioxidante fenólico lipofílico moderado; sinergiza y estabiliza vitaminas C y E.',
-  },
-  {
-    id: 'caffeine',
-    name: 'Cafeína',
-    inciName: 'Caffeine',
-    molecularWeight: 194.19,
-    logP: -0.07,
-    pka: 10.4,
-    category: 'Estimulante',
-    riskFlags: [],
-    source: 'PubChem CID 2519',
-    dataLevel: 'verified',
-    maxUseConcentration: 5.0,
-    regulationRef: 'Límite cosmético estándar',
-    description:
-      'Molécula modelo de alta permeabilidad; atraviesa con rapidez la barrera del estrato córneo.',
-  },
-  {
     id: 'hyaluronic-acid-5k',
     name: 'Ácido hialurónico (5 kDa)',
     inciName: 'Sodium Hyaluronate',
@@ -195,37 +135,6 @@ export const MOCK_INGREDIENTS: CatalogIngredient[] = [
     maxUseConcentration: 2.0,
     description:
       'Caso de prueba deliberado fuera de dominio (MW 5000 > 500 Da) para comprobar transparencia y baja confianza del modelo.',
-  },
-  {
-    id: 'kojic-acid',
-    name: 'Ácido kójico',
-    inciName: 'Kojic Acid',
-    molecularWeight: 142.11,
-    logP: -0.64,
-    pka: 7.9,
-    category: 'Despigmentante',
-    riskFlags: [],
-    source: 'PubChem CID 3840',
-    dataLevel: 'verified',
-    maxUseConcentration: 1.0,
-    regulationRef: 'Opinión SCCS/1641/22',
-    description:
-      'Inhibidor de tirosinasa con moderada hidrofilicidad y restricción de concentración por perfil toxicológico.',
-  },
-  {
-    id: 'bisabolol',
-    name: 'Alfa-bisabolol',
-    inciName: 'Bisabolol',
-    molecularWeight: 222.37,
-    logP: 4.75,
-    category: 'Calmante',
-    riskFlags: ['essential_oil'],
-    source: 'PubChem CID 10586',
-    dataLevel: 'verified',
-    maxUseConcentration: 1.0,
-    regulationRef: 'Uso cosmético seguro',
-    description:
-      'Sesquiterpeno alcohol de la manzanilla; activo altamente lipófilo con propiedades descongestionantes.',
   },
 ];
 

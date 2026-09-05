@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Sparkles,
   ShieldAlert,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -26,6 +27,80 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
   const [error, setError] = useState<string | null>(null);
   const [reportText, setReportText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  /**
+   * Descarga el libro Excel de 7 hojas.
+   *
+   * El backend lo arma leyendo la simulación de Supabase, así que **primero hay
+   * que guardarla**. Se hace aquí en dos pasos en vez de exigirle al usuario que
+   * guarde antes: guardar y exportar son la misma intención desde su lado.
+   */
+  const handleExportExcel = async () => {
+    if (!result || exporting) return;
+    setExporting(true);
+
+    try {
+      const saved = await fetch('/api/simulations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: result.input, metrics: result.metrics }),
+      });
+
+      if (!saved.ok) {
+        const body = await saved.json().catch(() => null);
+        toast.error('No se pudo guardar la simulación', {
+          description:
+            body?.error?.code === 'UNAUTHORIZED'
+              ? 'Inicia sesión: el reporte Excel se genera desde tu simulación guardada.'
+              : (body?.error?.message ?? 'Inténtalo de nuevo.'),
+        });
+        return;
+      }
+
+      const { id } = await saved.json();
+
+      // Una simulación en modo invitado no llega a la base: no hay nada que
+      // exportar y decirlo es mejor que devolver un archivo vacío.
+      if (!id || String(id).startsWith('mock-sim-')) {
+        toast.info('Simulación guardada solo en este navegador', {
+          description: 'Inicia sesión para generar el reporte Excel.',
+        });
+        return;
+      }
+
+      const res = await fetch(`/api/exports/${id}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error('No se pudo generar el Excel', {
+          description: body?.error?.message ?? 'Inténtalo de nuevo en unos segundos.',
+        });
+        return;
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get('content-disposition') ?? '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = match?.[1] ?? `dermasense_${String(id).slice(0, 8)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+
+      toast.success('Reporte Excel descargado', {
+        description:
+          '7 hojas: formulación, propiedades, evidencia, simulación, ML, análisis IA y regulatorio.',
+      });
+    } catch {
+      toast.error('Error de red al generar el reporte');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const fetchReport = async (forceMock = false) => {
     if (!result) return;
@@ -160,9 +235,34 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
           )}
 
           {reportText && !loading && (
-            <div className="flex flex-col gap-3 font-sans whitespace-pre-line leading-relaxed text-text/90">
-              {reportText}
-            </div>
+            <>
+              <div className="mb-4 flex flex-col gap-1.5 rounded-lg border border-border/60 bg-surface-2/40 p-3">
+                <span className="text-[11px] font-semibold text-text">
+                  ¿Para qué sirve este informe?
+                </span>
+                <p className="text-[10px] leading-relaxed text-text-muted">
+                  Traduce los números del motor a lenguaje de formulación: qué comportamiento de
+                  penetración se observa, qué lo explica y qué ajustes probar después. Sirve como{' '}
+                  <strong className="text-text">insumo técnico para revisión profesional</strong>,
+                  no como una evaluación de seguridad.
+                </p>
+                <p className="text-[10px] leading-relaxed text-text-muted">
+                  <strong className="text-text">La IA no calcula nada.</strong> Todos los valores
+                  provienen del motor determinista que corre en tu navegador; el modelo solo los
+                  interpreta. Si el servicio de IA falla, las métricas siguen intactas.
+                </p>
+                <p className="text-[10px] leading-relaxed text-text-muted">
+                  El <strong className="text-text">Excel</strong> de abajo lleva estas mismas
+                  conclusiones más la formulación, las propiedades del activo con su procedencia, la
+                  evidencia bibliográfica, las métricas de simulación y la revisión regulatoria: 7
+                  hojas pensadas para adjuntar a un expediente.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 font-sans whitespace-pre-line leading-relaxed text-text/90">
+                {reportText}
+              </div>
+            </>
           )}
         </div>
 
@@ -172,6 +272,20 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
             La IA no calcula números; interpreta resultados bajo supuestos declarados.
           </span>
           <div className="flex items-center gap-2">
+            {result && (
+              <button
+                onClick={handleExportExcel}
+                disabled={exporting}
+                className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-text transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
+              >
+                {exporting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                )}
+                <span>{exporting ? 'Generando…' : 'Excel (7 hojas)'}</span>
+              </button>
+            )}
             {reportText && (
               <button
                 onClick={handleCopy}

@@ -10,8 +10,11 @@ import {
 import { simulate } from '@/packages/engine/simulate';
 
 describe('Catálogo Curado Mock (lib/mock-catalog.ts)', () => {
-  it('contiene exactamente los 12 ingredientes curados', () => {
-    expect(MOCK_INGREDIENTS).toHaveLength(12);
+  it('contiene exactamente los 5 ingredientes curados', () => {
+    // Se recortó de 12 a 5 conservando los mejor sostenidos por evidencia:
+    // permeabilidad medida, límite regulatorio real y error local estimable.
+    // El ácido hialurónico se mantiene como caso deliberado fuera de dominio.
+    expect(MOCK_INGREDIENTS).toHaveLength(5);
     for (const ing of MOCK_INGREDIENTS) {
       expect(ing.id).toBeTruthy();
       expect(ing.name).toBeTruthy();

@@ -15,6 +15,8 @@ import {
   FolderOpen,
   ArrowRight,
   RefreshCw,
+  FileSpreadsheet,
+  Loader2,
 } from 'lucide-react';
 import {
   getLocalSimulations,
@@ -33,6 +35,7 @@ export default function SimulationsHistoryPage() {
   const [simulations, setSimulations] = useState<SavedSimulationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isReportOpen, setIsReportOpen] = useState(false);
+  const [exportingId, setExportingId] = useState<string | null>(null);
 
   // Cargar simulaciones (de API y de localStorage)
   const loadSimulations = async () => {
@@ -77,6 +80,54 @@ export default function SimulationsHistoryPage() {
   useEffect(() => {
     loadSimulations();
   }, []);
+
+  // Solo las simulaciones guardadas en Supabase tienen UUID; las de
+  // localStorage llevan el prefijo `sim-`. El backend arma el libro leyendo la
+  // fila de la base, así que una simulación puramente local no se puede
+  // exportar: en vez de fallar al pulsar, el botón no aparece.
+  const isPersisted = (id: string) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+  const handleExport = async (sim: SavedSimulationItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (exportingId) return;
+    setExportingId(sim.id);
+
+    try {
+      const res = await fetch(`/api/exports/${sim.id}`);
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error('No se pudo generar el Excel', {
+          description: body?.error?.message ?? 'Inténtalo de nuevo en unos segundos.',
+        });
+        return;
+      }
+
+      // La descarga se dispara desde un blob para poder respetar el nombre de
+      // archivo que envía el backend en Content-Disposition.
+      const blob = await res.blob();
+      const disposition = res.headers.get('content-disposition') ?? '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = match?.[1] ?? `dermasense_${sim.id.slice(0, 8)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+
+      toast.success('Reporte Excel descargado', {
+        description: '7 hojas: formulación, propiedades, evidencia, simulación, ML, IA y regulatorio.',
+      });
+    } catch {
+      toast.error('Error de red al descargar el reporte');
+    } finally {
+      setExportingId(null);
+    }
+  };
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -277,13 +328,37 @@ export default function SimulationsHistoryPage() {
                       )}
                     </div>
 
-                    {/* Botón de acción */}
-                    <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3 text-xs font-medium text-accent">
-                      <span className="flex items-center gap-1">
-                        <Play className="h-3 w-3" />
-                        <span>Cargar en Laboratorio</span>
-                      </span>
-                      <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
+                    {/* Acciones */}
+                    <div className="mt-4 flex flex-col gap-2 border-t border-border/60 pt-3">
+                      <div className="flex items-center justify-between text-xs font-medium text-accent">
+                        <span className="flex items-center gap-1">
+                          <Play className="h-3 w-3" />
+                          <span>Cargar en Laboratorio</span>
+                        </span>
+                        <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
+                      </div>
+
+                      {isPersisted(sim.id) ? (
+                        <button
+                          onClick={(e) => handleExport(sim, e)}
+                          disabled={exportingId === sim.id}
+                          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2/60 px-2 py-1.5 text-[11px] font-medium text-text-muted transition-colors hover:border-accent/60 hover:text-text disabled:opacity-60 cursor-pointer"
+                        >
+                          {exportingId === sim.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <FileSpreadsheet className="h-3.5 w-3.5" />
+                          )}
+                          <span>
+                            {exportingId === sim.id ? 'Generando…' : 'Descargar Excel (7 hojas)'}
+                          </span>
+                        </button>
+                      ) : (
+                        <span className="text-center text-[10px] leading-relaxed text-text-muted/70">
+                          Guardada solo en este navegador. Inicia sesión y vuelve a guardarla para
+                          poder exportarla.
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
