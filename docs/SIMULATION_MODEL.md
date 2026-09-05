@@ -116,10 +116,11 @@ con error < 1 %.
 | Métrica | Definición | Unidad |
 |---|---|---|
 | `logKp` | Potts–Guy | log(cm/h) |
-| `steadyStateFlux` | `J = Kp · C_vehículo` | µg/cm²/h |
+| `maxFluxInfiniteDose` | `J = Kp · C_vehículo`. Cota superior teórica: con dosis finita el vehículo se agota antes de alcanzarla | µg/cm²/h |
 | `lagTime` | `t_lag = h_sc² / (6 · D_sc)` | h |
 | `absorbedFraction24h` | masa que cruzó el SC / masa aplicada | % |
-| `penetrationDepth` | `x` donde `C(x) = 0.05 · C_max` a las 24 h | µm |
+| `timeTo50PctHours` | horas hasta que el 50 % de la dosis cruza el SC | h |
+| `penetrationDepth` | `x` donde la **actividad** `C/K` cae al 5 % de su máximo | µm |
 | `peakConcentrationVE` | máximo de `C` en epidermis viable | µg/cm³ |
 | `irritationIndex` | heurístico, sección 5 | 0–100 |
 | `confidence` | `high` / `medium` / `low` según dominio de aplicabilidad | enum |
@@ -167,6 +168,15 @@ Bandas de lectura: `0–25 bajo · 26–50 moderado · 51–75 alto · 76–100 
 5. **Sin calibración experimental propia.** Los defaults provienen de literatura; no se han
    comparado contra celdas de Franz propias. La validación cruzada es roadmap declarado.
 6. **La irritación es heurística** (sección 5).
+7. **La fracción absorbida satura en ventanas largas.** Con dosis finita pequeña
+   (2 mg/cm² al 2 % = 40 µg/cm²) y 24 h de simulación, la mayoría de los activos dentro
+   del dominio acaban cruzando el estrato córneo, por lo que esta métrica discrimina mal
+   entre formulaciones. Las métricas que sí discriminan son `timeTo50PctHours`,
+   `penetrationDepth` y `peakConcentrationVE`. La UI debe jerarquizarlas en ese orden.
+8. **No modela evaporación del vehículo ni pérdidas superficiales**, que en la práctica
+   reducen la fracción realmente disponible para penetrar. El modelo asume disponibilidad
+   total del activo aplicado, por lo que sus fracciones absorbidas son una **cota
+   superior**, no una predicción de ensayo.
 
 Estas limitaciones se exponen literalmente en la UI (panel "Supuestos del modelo") y en el
 reporte generado por IA. Ocultarlas sería el mayor riesgo reputacional del producto.

@@ -71,9 +71,10 @@ export interface SimulationFrame {
 export interface SimulationMetrics {
   logKp: number;
   permeabilityCmH: number;
-  steadyStateFlux: number;      // µg/cm²/h
+  maxFluxInfiniteDose: number;  // µg/cm²/h — cota superior a dosis infinita
   lagTimeHours: number;
   absorbedFractionPct: number;
+  timeTo50PctHours: number;     // discrimina mejor que absorbedFractionPct
   penetrationDepthUm: number;
   peakConcentrationVE: number;
   irritationIndex: number;      // 0-100, HEURÍSTICO

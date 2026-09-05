@@ -319,9 +319,10 @@ where  s.user_id = auth.uid()
 {
   "logKp": -2.41,
   "permeabilityCmH": 0.0039,
-  "steadyStateFlux": 4.82,
-  "lagTimeHours": 1.93,
-  "absorbedFractionPct": 12.4,
+  "maxFluxInfiniteDose": 230.7,
+  "lagTimeHours": 1.36,
+  "absorbedFractionPct": 96.98,
+  "timeTo50PctHours": 5.61,
   "penetrationDepthUm": 310,
   "peakConcentrationVE": 86.2,
   "irritationIndex": 34,

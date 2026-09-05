@@ -42,7 +42,8 @@ ESTRUCTURA DE SALIDA (Markdown, máximo 400 palabras)
 Dos o tres frases sobre el comportamiento de penetración observado.
 
 ## Interpretación de las métricas
-Explica logKp, flujo en estado estacionario, lag time y fracción absorbida, relacionándolos
+Explica logKp, flujo máximo teórico, lag time, tiempo hasta el 50 % y fracción absorbida,
+relacionándolos
 con las propiedades fisicoquímicas del activo (MW, logP) y con el vehículo elegido.
 
 ## Consideraciones de tolerancia
@@ -83,9 +84,10 @@ Duración simulada: {{durationHours}} h
 <resultados>
 log Kp: {{metrics.logKp}}
 Permeabilidad: {{metrics.permeabilityCmH}} cm/h
-Flujo en estado estacionario: {{metrics.steadyStateFlux}} µg/cm²/h
+Flujo maximo teorico (dosis infinita): {{metrics.maxFluxInfiniteDose}} µg/cm²/h
 Lag time: {{metrics.lagTimeHours}} h
-Fracción absorbida a {{durationHours}} h: {{metrics.absorbedFractionPct}} %
+Fracción que cruza el estrato córneo a {{durationHours}} h: {{metrics.absorbedFractionPct}} %
+Tiempo hasta el 50 % de absorción: {{metrics.timeTo50PctHours}} h
 Profundidad de penetración: {{metrics.penetrationDepthUm}} µm
 Concentración pico en epidermis viable: {{metrics.peakConcentrationVE}} µg/cm³
 Índice heurístico de irritación: {{metrics.irritationIndex}} / 100 ({{metrics.irritationBand}})
